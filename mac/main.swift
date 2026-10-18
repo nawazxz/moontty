@@ -193,7 +193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
   // MARK: menu
 
   func js(_ s: String) { web.evaluateJavaScript(s) }
-  @objc func newMission() { js("openNew()") }
+  @objc func newMission() { js("quickShell()") }
+  @objc func newMissionDialog() { js("openNew()") }
   @objc func toggleWall() { js("document.getElementById('wallBtn').click()") }
   @objc func reload() { web.load(URLRequest(url: deckURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)) }
 
@@ -230,7 +231,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
       item("Select All", #selector(NSText.selectAll(_:)), "a"),
     ])
     add("Missions", [
-      item("Deploy Mission", #selector(newMission), "n"),
+      item("New Shell", #selector(newMission), "n"),
+      item("New Mission…", #selector(newMissionDialog), "n", [.command, .shift]),
       item("Overview", #selector(toggleWall), "0"),
       .separator(),
       item("Reload", #selector(reload), "r"),

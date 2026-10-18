@@ -81,15 +81,18 @@ To get a `moontty` command on your PATH: `ln -s "$PWD/deck" /usr/local/bin/moont
 
 ## Using it
 
-Press `⌥N` (or **+ deploy**) to start a mission: give it a codename, a folder and a command (`claude` by default). Tick **Own branch** to give it a worktree.
+Press `⌘N` (or **+ deploy**) and you land in a shell in your home folder: start `claude` or anything else yourself. `⌘⇧N` (or shift-click **+ deploy**) opens the full dialog: a codename, a folder, a command and **Own branch** for a worktree. Double-click a mission's name to rename it.
+
+Moontty's own shortcuts all use `⌘`, so every Claude Code shortcut works in its terminals as in iTerm or Ghostty: `⇧↵` new line, `⌥P` model, `⌥T` thinking, `⇧Tab` modes, `ctrl+R` history, `ctrl+V` paste an image, `esc esc` rewind. `⌘←`/`⌘→` jump to the start/end of the line, `⌘⌫` clears it, `⌥←`/`⌥→`/`⌥⌫` move and delete by word.
 
 | Key | Does |
 |---|---|
-| `⌥N` | new mission |
-| `⌥1` to `⌥9` | fly to mission 1 to 9 |
-| `⌥]` / `⌥[` | next / previous mission |
-| `⌥0` or `⌥G` | overview: fit everything on screen |
-| `⌥=` / `⌥-` | zoom |
+| `⌘N` / `⌘⇧N` | new shell / new mission with options |
+| `⌘1` to `⌘9` | fly to mission 1 to 9 |
+| `⌘]` / `⌘[` | next / previous mission |
+| `⌘0` | overview: fit everything on screen |
+| `⌘=` / `⌘-` | zoom |
+| `⌘K` | clear the terminal |
 | `⌘F` | find in the current mission |
 | `⌘`-click | open a link |
 | pinch, `ctrl`-scroll | zoom the canvas |

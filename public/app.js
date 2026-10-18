@@ -286,6 +286,15 @@ function addPane(info) {
   term.open(el.querySelector('.term'));
   loadGpu(term);
   term.onData((data) => send({ t: 'input', id: info.id, data }));
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    if (e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyK') { term.clear(); return false; }
+    const seq = MAC_KEYS[`${e.metaKey ? 'cmd+' : ''}${e.ctrlKey ? 'ctrl+' : ''}${e.altKey ? 'alt+' : ''}${e.shiftKey ? 'shift+' : ''}${e.key}`];
+    if (!seq) return true;
+    e.preventDefault();
+    send({ t: 'input', id: info.id, data: seq });
+    return false;
+  });
   const p = { info, term, fit, el, search, crew: null, lastSize: '' };
   panes.set(info.id, p);
   if (!W[info.id]) { W[info.id] = placeNew(info); save(); }
@@ -373,6 +382,14 @@ function rename(p) {
   nm.addEventListener('keydown', key);
   nm.addEventListener('blur', blur);
 }
+
+// Keys as a native Mac terminal sends them, so Claude Code's shortcuts work as in iTerm or Ghostty:
+// ⇧↵ is a new line, ⌘←/→ jump to line start/end, ⌘⌫ clears the line, ⌥←/→/⌫ move and delete by word.
+const MAC_KEYS = {
+  'shift+Enter': '\x1b\r',
+  'cmd+ArrowLeft': '\x01', 'cmd+ArrowRight': '\x05', 'cmd+Backspace': '\x15',
+  'alt+ArrowLeft': '\x1bb', 'alt+ArrowRight': '\x1bf', 'alt+Backspace': '\x1b\x7f',
+};
 
 function place(p) {
   const r = W[p.info.id];
@@ -956,7 +973,7 @@ function openNew() {
 }
 window.openNew = openNew;
 // A new mission lands straight in a shell in your home folder; start claude (or anything) yourself.
-// Shift-click or ⌥⇧N opens the full dialog: folder, command, own branch.
+// Shift-click or ⌘⇧N opens the full dialog: folder, command, own branch.
 function quickShell() {
   const used = new Set([...panes.values()].map((p) => p.info.name));
   send({ t: 'create', name: CODENAMES.find((v) => !used.has(v)) || `Op ${panes.size + 1}`, cwd: '~', cmd: '' });
@@ -993,13 +1010,15 @@ dlg.addEventListener('close', () => {
 });
 
 // ---------- keys (capture phase so they win over the terminal) ----------
+// Moontty's own shortcuts all use ⌘, like a Mac terminal's tabs, so every ⌥ and ctrl
+// combination reaches Claude Code untouched (⌥P model, ⌥T thinking, ctrl+R history...).
 window.addEventListener('keydown', (e) => {
-  if (!e.altKey || e.metaKey || e.ctrlKey || dlg.open) return;
+  if (!e.metaKey || e.altKey || e.ctrlKey || dlg.open) return;
   const ids = [...panes.keys()];
   const i = ids.indexOf(current);
   let handled = true;
-  if (/^Digit[1-9]$/.test(e.code)) focusMission(ids[Number(e.code.slice(5)) - 1]);
-  else if (e.code === 'Digit0' || e.code === 'KeyG') overview();
+  if (/^Digit[1-9]$/.test(e.code) && !e.shiftKey) focusMission(ids[Number(e.code.slice(5)) - 1]);
+  else if (e.code === 'Digit0' && !e.shiftKey) overview();
   else if (e.code === 'KeyN') e.shiftKey ? openNew() : quickShell();
   else if (e.code === 'BracketRight') focusMission(ids[(i + 1) % ids.length]);
   else if (e.code === 'BracketLeft') focusMission(ids[(i - 1 + ids.length) % ids.length]);
