@@ -71,7 +71,7 @@ function computeStatus(s) {
 
 // ---------- persistence ----------
 function save() {
-  const list = [...sessions.values()].map(({ id, name, cwd, cmd, worktree, claudeSid }) => ({ id, name, cwd, cmd, worktree, claudeSid }));
+  const list = [...sessions.values()].map(({ id, name, cwd, cmd, worktree, claudeSid, parent }) => ({ id, name, cwd, cmd, worktree, claudeSid, parent }));
   fs.writeFileSync(STATE_FILE, JSON.stringify(list, null, 2));
 }
 
@@ -93,7 +93,7 @@ function paneEnv(s) {
   const env = { ...process.env };
   const INHERITED = /^(TERM_PROGRAM|TERM_PROGRAM_VERSION|TERM_SESSION_ID|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(ENTRYPOINT|EXECPATH|CHILD_SESSION|SESSION_.*|MESSAGING_.*))$/;
   for (const k of Object.keys(env)) if (INHERITED.test(k)) delete env[k];
-  return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'agent-deck', SHELL_SESSIONS_DISABLE: '1', PROMPT_EOL_MARK: '', AGENT_DECK_ID: String(s.id), AGENT_DECK_PORT: String(PORT) };
+  return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'agent-deck', SHELL_SESSIONS_DISABLE: '1', PROMPT_EOL_MARK: '', AGENT_DECK_ID: String(s.id), AGENT_DECK_PORT: String(PORT), PATH: `${path.join(__dirname, 'bin')}:${env.PATH || ''}` };
 }
 
 const sockOf = (s) => path.join(SOCK_DIR, `${s.id}.sock`);
@@ -197,7 +197,7 @@ function flushBuffers() {
 }
 setInterval(flushBuffers, 2000);
 
-function createSession({ name, cwd, cmd, id, worktree, ownBranch, claudeSid }, fresh = true) {
+function createSession({ name, cwd, cmd, id, worktree, ownBranch, claudeSid, parent }, fresh = true) {
   const s = {
     id: id || nextId++,
     name: name || `agent-${nextId}`,
@@ -205,6 +205,7 @@ function createSession({ name, cwd, cmd, id, worktree, ownBranch, claudeSid }, f
     cmd: cmd ?? 'claude',
     worktree: worktree || null,
     claudeSid: claudeSid || null,
+    parent: parent || null, // companion shell docked to this mission
     buffer: '',
     status: 'idle',
   };
@@ -222,7 +223,7 @@ function createSession({ name, cwd, cmd, id, worktree, ownBranch, claudeSid }, f
 }
 
 function publicInfo(s) {
-  return { id: s.id, name: s.name, cwd: s.cwd, cmd: s.cmd, status: s.status, startedAt: s.startedAt, exitCode: s.exitCode, worktree: s.worktree, git: s.git, ports: s.ports };
+  return { id: s.id, name: s.name, cwd: s.cwd, cmd: s.cmd, status: s.status, startedAt: s.startedAt, exitCode: s.exitCode, worktree: s.worktree, git: s.git, ports: s.ports, pr: s.pr, parent: s.parent || null };
 }
 
 function broadcast(msg) {
@@ -273,11 +274,31 @@ setInterval(async () => {
       const info = await git.info(expand(s.cwd), s.worktree);
       const p = ports.get(s.id) || [];
       const key = JSON.stringify([info, p]);
-      if (key !== s.gitKey) { s.gitKey = key; s.git = info; s.ports = p; broadcast({ t: 'git', id: s.id, git: info, ports: p }); }
+      if (key !== s.gitKey) {
+        s.gitKey = key; s.git = info; s.ports = p;
+        broadcast({ t: 'git', id: s.id, git: info, ports: p });
+        if (info?.branch && prSeen.get(s.id) !== info.branch) pollPrs(s.id).catch(() => {});
+      }
     }
   } catch (e) { console.error('git poll', e.message); }
   gitBusy = false;
 }, 4000);
+
+// Pull request per mission branch, via gh. Slow and rate-limited, so once a minute,
+// and right away when a mission's branch changes.
+const prSeen = new Map(); // id -> branch last checked
+async function pollPrs(only) {
+  for (const s of sessions.values()) {
+    if (only && s.id !== only) continue;
+    const branch = s.git?.branch;
+    if (!branch) continue;
+    prSeen.set(s.id, branch);
+    const info = await git.pr(expand(s.cwd), branch);
+    const key = JSON.stringify(info);
+    if (key !== s.prKey) { s.prKey = key; s.pr = info; broadcast({ t: 'pr', id: s.id, pr: info }); }
+  }
+}
+setInterval(() => pollPrs().catch((e) => console.error('pr poll', e.message)), 60000);
 
 const run = (cmd, args) => new Promise((res) => execFile(cmd, args, { maxBuffer: 8 << 20 }, (err, out) => res(err && !out ? '' : String(out))));
 
@@ -381,6 +402,17 @@ const server = http.createServer(async (req, res) => {
     if (s && !s.exited) onHook(s, ev);
     return res.writeHead(204).end();
   }
+  // nc-preview from inside a pane: drive that mission's preview pane.
+  if (req.method === 'POST' && url === '/preview') {
+    const s = sessions.get(Number(req.headers['x-deck-id']));
+    let m = {};
+    try { m = JSON.parse(await readBody(req, 8192)); } catch {}
+    const target = s && (s.parent && sessions.has(s.parent) ? s.parent : s.id);
+    if (!target) return res.writeHead(404).end();
+    if (m.url && !/^https?:\/\/[^\s]+$/.test(m.url)) return res.writeHead(400).end();
+    broadcast({ t: 'preview', id: target, url: m.url || null, action: m.action || null });
+    return res.writeHead(204).end();
+  }
   const rel = ROUTES[url] || path.join('public', url === '/' ? 'index.html' : url);
   const file = path.join(__dirname, rel);
   if (!file.startsWith(__dirname)) return res.writeHead(403).end();
@@ -409,7 +441,8 @@ wss.on('connection', (ws, req) => {
     const s = sessions.get(m.id);
     switch (m.t) {
       case 'create': {
-        const ns = createSession({ name: m.name, cwd: m.cwd, cmd: m.cmd, ownBranch: !!m.ownBranch });
+        const parent = sessions.has(m.parent) ? m.parent : null;
+        const ns = createSession({ name: m.name, cwd: m.cwd, cmd: m.cmd, ownBranch: !parent && !!m.ownBranch, parent });
         save();
         pushList();
         ws.send(JSON.stringify({ t: 'created', id: ns.id, note: ns.note }));
@@ -425,6 +458,9 @@ wss.on('connection', (ws, req) => {
         break;
       case 'diff':
         if (s) git.diff(expand(s.cwd), s.worktree).then((d) => ws.readyState === 1 && ws.send(JSON.stringify({ t: 'diff', id: s.id, ...d })));
+        break;
+      case 'pr':
+        if (s?.worktree) git.openPr(s.worktree).then((r) => { ws.send(JSON.stringify({ t: 'merged', id: s.id, ...r })); prSeen.delete(s.id); pollPrs(s.id); });
         break;
       case 'merge':
         if (s?.worktree) git.merge(s.worktree).then((r) => ws.send(JSON.stringify({ t: 'merged', id: s.id, ...r })));

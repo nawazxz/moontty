@@ -43,6 +43,8 @@ function connect() {
     else if (m.t === 'created') { setTimeout(() => focusMission(m.id), 80); if (m.note) setTimeout(() => panes.get(m.id) && toast(panes.get(m.id), m.note, 'idle'), 400); }
     else if (m.t === 'git') onGit(m);
     else if (m.t === 'history') onHistory(m);
+    else if (m.t === 'pr') { const p = panes.get(m.id); if (p) { p.info.pr = m.pr; scheduleRender(); } }
+    else if (m.t === 'preview') onPreview(m);
     else if (m.t === 'diff') onDiff(m);
     else if (m.t === 'merged') { const p = panes.get(m.id); if (p) toast(p, m.msg, m.ok ? 'done' : 'waiting'); send({ t: 'diff', id: m.id }); }
   };
@@ -124,6 +126,9 @@ function bounds(ids, withCrew = true) {
     const r = W[id];
     if (!r) continue;
     add(r.x, r.y, r.w, r.h);
+    const pp = panes.get(Number(id));
+    if (pp?.prevEl) add(r.x, r.y - PREV_H - DIFF_GAP, r.w, PREV_H);
+    if (pp?.diffEl) add(r.x, r.y + r.h + DIFF_GAP, r.w, 440);
     if (withCrew) for (const [k, n] of nodes) if (k.startsWith(`${id}:`)) { const q = nodePos(k); add(q.x, q.y, n.offsetWidth, n.offsetHeight); }
   }
   return x0 === Infinity ? null : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
@@ -149,8 +154,9 @@ canvas.addEventListener('pointerdown', (e) => {
   flight++;
   const sx = e.clientX - cam.x, sy = e.clientY - cam.y;
   canvas.classList.add('panning');
+  document.body.classList.add('dragging');
   const mv = (ev) => { cam.x = ev.clientX - sx; cam.y = ev.clientY - sy; applyCam(); };
-  const up = () => { canvas.classList.remove('panning'); removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
+  const up = () => { canvas.classList.remove('panning'); document.body.classList.remove('dragging'); removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
   addEventListener('pointermove', mv);
   addEventListener('pointerup', up);
 });
@@ -158,7 +164,7 @@ canvas.addEventListener('dblclick', (e) => { if (e.target === canvas || e.target
 canvas.addEventListener('wheel', (e) => {
   if (!cam) return;
   if (e.ctrlKey) { e.preventDefault(); zoomTo(e.clientX, e.clientY, cam.z * Math.exp(-e.deltaY * 0.01)); return; }
-  if (e.target.closest('.term, .node.open .log, .diffp .dx, .diffp .files')) return;
+  if (e.target.closest('.term, .node.open .log, .diffp .dx, .diffp .files, .prevp')) return;
   e.preventDefault();
   flight++;
   cam.x -= e.deltaX;
@@ -181,7 +187,8 @@ function drag(e, move, end) {
     moved = true;
     move((ev.clientX - sx) / cam.z, (ev.clientY - sy) / cam.z);
   };
-  const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); end?.(moved); };
+  document.body.classList.add('dragging'); // iframes would swallow the pointer otherwise
+  const up = () => { document.body.classList.remove('dragging'); removeEventListener('pointermove', mv); removeEventListener('pointerup', up); end?.(moved); };
   addEventListener('pointermove', mv);
   addEventListener('pointerup', up);
 }
@@ -189,7 +196,7 @@ function drag(e, move, end) {
 // ---------- missions (floating terminals) ----------
 function syncSessions(infos) {
   const ids = new Set(infos.map((i) => i.id));
-  for (const [id, p] of panes) if (!ids.has(id)) { p.term.dispose(); p.el.remove(); p.diffEl?.remove(); panes.delete(id); }
+  for (const [id, p] of panes) if (!ids.has(id)) { p.term.dispose(); p.el.remove(); p.diffEl?.remove(); p.prevEl?.remove(); panes.delete(id); }
   for (const k of Object.keys(W)) if (!ids.has(Number(k))) delete W[k];
   for (const k of Object.keys(C)) if (!ids.has(Number(k.split(':')[0]))) delete C[k];
   for (const [k, n] of nodes) if (!ids.has(Number(k.split(':')[0]))) { n.remove(); nodes.delete(k); }
@@ -208,7 +215,13 @@ function syncSessions(infos) {
   drawWires();
 }
 
-function placeNew() {
+function placeNew(info) {
+  // a companion shell docks to the left of its mission
+  const pr = info?.parent && W[info.parent];
+  if (pr) {
+    const sibs = [...panes.values()].filter((q) => q.info.parent === info.parent && q.info.id !== info.id).length;
+    return { x: pr.x - 600 - sibs * 24, y: pr.y + sibs * 24, w: 560, h: pr.h };
+  }
   const rs = Object.values(W);
   if (!rs.length) return { x: 0, y: 0, w: 920, h: 580 };
   // to the right of everything, leaving room for the crew column
@@ -222,7 +235,7 @@ function addPane(info) {
     <div class="bar"><span class="led"></span><b class="nm"></b>
       <span class="who"><svg class="moon" viewBox="0 0 24 24"><path d="${MOON}"/></svg>ZERO</span>
       <span class="meta"></span><span class="gitb"></span><span class="ports"></span><span class="now"></span>
-      <span class="acts"><button data-a="diff">changes</button><button data-a="merge" hidden>merge</button><button data-a="restart">restart</button><button data-a="kill">end</button></span></div>
+      <span class="acts"><button data-a="shell" title="Open a plain shell beside this mission">+ shell</button><button data-a="preview" title="Browser preview beside this mission">preview</button><button data-a="diff">changes</button><button data-a="pr" hidden>open pr</button><button data-a="merge" hidden>merge</button><button data-a="restart">restart</button><button data-a="kill">end</button></span></div>
     <div class="term"></div>
     <div class="big"><span class="led"></span><b></b><span class="bn"></span></div>
     <i class="grip"></i>`;
@@ -242,7 +255,8 @@ function addPane(info) {
   term.onData((data) => send({ t: 'input', id: info.id, data }));
   const p = { info, term, fit, el, search, crew: null, lastSize: '' };
   panes.set(info.id, p);
-  if (!W[info.id]) { W[info.id] = placeNew(); save(); }
+  if (!W[info.id]) { W[info.id] = placeNew(info); save(); }
+  if (info.parent) el.classList.add('aux');
   place(p);
 
   const id = info.id;
@@ -258,17 +272,34 @@ function addPane(info) {
     const a = e.target.closest('button')?.dataset.a;
     if (a === 'restart') send({ t: 'restart', id });
     if (a === 'diff') toggleDiff(p);
+    if (a === 'shell') send({ t: 'create', name: `${p.info.name} shell`, cwd: p.info.cwd, cmd: '', parent: id });
+    if (a === 'preview') togglePreview(p);
+    if (a === 'pr') {
+      const wt = p.info.worktree;
+      if (confirm(`Push ${wt.branch} to origin and open a pull request into ${wt.base}?\n\nTitle and body come from the commits (gh pr create --fill).`)) send({ t: 'pr', id });
+    }
     if (a === 'merge') {
       const wt = p.info.worktree;
       if (confirm(`Merge ${wt.branch} into ${wt.base}?\n\nThis runs in ${wt.root}. Conflicts are never auto-resolved: the merge is undone and you get a message.`)) send({ t: 'merge', id });
     }
-    if (a === 'kill' && confirm(`End mission ${p.info.name}? ZERO and its crew will be stood down.`)) {
+    const kids = [...panes.values()].filter((q) => q.info.parent === id);
+    if (a === 'kill' && confirm(`End mission ${p.info.name}? ZERO and its crew will be stood down.${kids.length ? `\n\nIts ${kids.length} docked shell(s) end too.` : ''}`)) {
+      for (const k of kids) send({ t: 'kill', id: k.info.id });
       const wt = p.info.worktree;
       const dropBranch = !!wt && confirm(`Also delete branch ${wt.branch} and its folder?\n\n${wt.top}\n\nUnmerged work on it is lost. Cancel keeps both.`);
       send({ t: 'kill', id, dropBranch });
     }
   };
-  bar.querySelector('.ports').onclick = (e) => { const b = e.target.closest('button'); if (b) send({ t: 'open', port: Number(b.dataset.port) }); };
+  // port: preview it beside the mission (⌘-click opens your browser instead)
+  bar.querySelector('.ports').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const port = Number(b.dataset.port);
+    const host = panes.get(p.info.parent) || p;
+    if (e.metaKey) send({ t: 'open', port });
+    else openPreview(host, `http://localhost:${port}/`);
+  };
+  bar.querySelector('.gitb').onclick = (e) => { const a = e.target.closest('[data-url]'); if (a) send({ t: 'open', url: a.dataset.url }); };
   el.querySelector('.grip').addEventListener('pointerdown', (e) => {
     const r = W[id], ow = r.w, oh = r.h;
     drag(e, (dx, dy) => { r.w = Math.max(420, Math.round(ow + dx)); r.h = Math.max(240, Math.round(oh + dy)); place(p); }, save);
@@ -282,6 +313,8 @@ function place(p) {
   const r = W[p.info.id];
   Object.assign(p.el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
   if (p.diffEl) Object.assign(p.diffEl.style, { left: `${r.x}px`, top: `${r.y + r.h + DIFF_GAP}px`, width: `${r.w}px` });
+  if (p.prevEl) Object.assign(p.prevEl.style, { left: `${r.x}px`, top: `${r.y - PREV_H - DIFF_GAP}px`, width: `${r.w}px`, height: `${PREV_H}px` });
+  for (const q of panes.values()) if (q.info.parent === p.info.id) drawWires();
   placeCrew(p.info.id);
   renderBeacons();
 }
@@ -327,13 +360,18 @@ function render() {
     p.el.querySelector('.big b').textContent = p.info.name;
     p.el.querySelector('.who').style.display = main ? '' : 'none';
     p.el.querySelector('.meta').textContent = main
-      ? `${fmtModel(main.model)} · ${main.tools} ops · ctx ${fmtK(main.ctx)}${crew.length ? ` · crew ${run}/${crew.length}` : ''}`
+      ? `${fmtModel(main.model)} · ${main.tools} ops · ctx ${fmtK(main.ctx)}${crew.length ? ` · crew ${run}/${crew.length}` : ''}${spendText(p)}`
       : p.info.cmd || 'shell';
+    p.el.querySelector('.meta').title = main ? spendTitle(p) : '';
     const g = p.info.git;
     const wt = p.info.worktree;
     p.el.querySelector('.gitb').innerHTML = g
-      ? `<span class="br${wt ? ' own' : ''}">${esc(g.branch || 'detached')}</span>${g.dirty ? `<span class="dt">${g.dirty} changed</span>` : ''}${g.ahead ? `<span class="ah">${g.ahead} ahead</span>` : ''}`
+      ? `<span class="br${wt ? ' own' : ''}">${esc(g.branch || 'detached')}</span>${g.dirty ? `<span class="dt">${g.dirty} changed</span>` : ''}${g.ahead ? `<span class="ah">${g.ahead} ahead</span>` : ''}${prChip(p.info.pr)}`
       : '';
+    p.el.querySelector('[data-a=pr]').hidden = !(wt && g?.ahead && !p.info.pr);
+    p.el.querySelector('[data-a=shell]').hidden = !!p.info.parent;
+    p.el.querySelector('[data-a=preview]').hidden = !!p.info.parent;
+    p.el.querySelector('[data-a=preview]').classList.toggle('on', !!p.prevEl);
     p.el.querySelector('.ports').innerHTML = (p.info.ports || []).map((n) => `<button data-port="${n}" title="Open localhost:${n}">:${n}</button>`).join('');
     p.el.querySelector('[data-a=merge]').hidden = !wt;
     p.el.querySelector('[data-a=diff]').hidden = !g;
@@ -390,7 +428,7 @@ const CODENAMES = ['Blackout', 'Nightfall', 'Redline', 'Afterhours', 'Static', '
 const hash = (s) => [...String(s)].reduce((h, c) => (h * 33 + c.charCodeAt(0)) >>> 0, 5381);
 const role = (a) => ROLE[a.type] || a.type || 'operator';
 const fmtK = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'K' : String(n || 0));
-const fmtModel = (m) => (m || 'claude').replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2').toUpperCase();
+const fmtModel = (m) => (m || 'claude').replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/-(\d+)$/, ' $1').toUpperCase();
 const unitNo = (n) => `U-${String(n).padStart(2, '0')}`;
 
 // Unit insignia: a mirrored 5x5 pixel patch drawn from the call sign.
@@ -521,6 +559,18 @@ function drawWires() {
     ports.add(`${x1},${y1}`);
   }
   for (const pt of ports) { const [x, y] = pt.split(','); out += `<circle class="port src" cx="${x}" cy="${y}" r="4"/>`; }
+  // docked shells hang off the mission's left edge; the preview sits on top
+  for (const [id, p] of panes) {
+    const r = W[id], pr = W[p.info.parent];
+    if (r && pr) {
+      const x1 = pr.x, y1 = pr.y + 15, x2 = r.x + r.w, y2 = r.y + 15, c = Math.max(30, (x1 - x2) * 0.5);
+      out += `<path class="wire" d="M${x1},${y1} C${x1 - c},${y1} ${x2 + c},${y2} ${x2},${y2}"/><circle class="port src" cx="${x1}" cy="${y1}" r="3"/><circle class="port" cx="${x2}" cy="${y2}" r="3"/>`;
+    }
+    if (r && p.prevEl) {
+      const x = r.x + 40, y1 = r.y, y2 = r.y - DIFF_GAP;
+      out += `<path class="wire" d="M${x},${y1} L${x},${y2}"/><circle class="port src" cx="${x}" cy="${y1}" r="3"/><circle class="port" cx="${x}" cy="${y2}" r="3"/>`;
+    }
+  }
   // changes panel hangs straight below its mission
   for (const [id, p] of panes) {
     const r = W[id];
@@ -553,6 +603,73 @@ function onCrew(m) {
     seen.set(key, { status: a.status, steps: a.steps.length });
   }
   scheduleRender();
+}
+
+// ---------- spend: tokens and an API-rate cost estimate for the lead + its crew ----------
+function spend(p) {
+  const t = { in: 0, out: 0, cw: 0, cr: 0, usd: 0 };
+  for (const a of [p.crew?.main, ...(p.crew?.crew || [])]) if (a?.spent) for (const k in t) t[k] += a.spent[k];
+  return t;
+}
+const fmtUsd = (n) => (n < 0.01 ? '<$0.01' : n < 10 ? `$${n.toFixed(2)}` : `$${Math.round(n)}`);
+function spendText(p) { const t = spend(p); return t.usd ? ` · ≈${fmtUsd(t.usd)}` : ''; }
+function spendTitle(p) {
+  const t = spend(p);
+  return `Tokens (lead + crew)\ninput ${fmtK(t.in)} · output ${fmtK(t.out)}\ncache write ${fmtK(t.cw)} · cache read ${fmtK(t.cr)}\n≈${fmtUsd(t.usd)} at API rates (a subscription isn't billed per token)`;
+}
+
+function prChip(pr) {
+  if (!pr) return '';
+  const mark = { pass: '✓', fail: '✗', pending: '•', none: '' }[pr.checks];
+  const rv = pr.review === 'APPROVED' ? ' approved' : pr.review === 'CHANGES_REQUESTED' ? ' changes asked' : '';
+  return `<span class="pr ${pr.state.toLowerCase()} ${pr.checks}" data-url="${esc(pr.url)}" title="Open PR #${pr.number} on GitHub">#${pr.number} ${pr.state.toLowerCase()}${mark ? ` ${mark}` : ''}${rv}</span>`;
+}
+
+// ---------- preview: a browser pane above the mission (agents drive it with nc-preview) ----------
+const PREV_H = 560;
+function openPreview(p, url) {
+  if (!p.prevEl) {
+    const el = document.createElement('div');
+    el.className = 'prevp';
+    el.innerHTML = `<div class="hd"><b>PREVIEW</b><input spellcheck="false" autocomplete="off"><button data-a="go">go</button><button data-a="re">reload</button><button data-a="ext" title="Open in your browser">open ↗</button><button data-a="x">close</button></div><iframe></iframe><div class="shield"></div>`;
+    world.appendChild(el);
+    p.prevEl = el;
+    const inp = el.querySelector('input');
+    const go = () => { let u = inp.value.trim(); if (/^\d+$/.test(u)) u = `http://localhost:${u}/`; else if (!/^https?:\/\//.test(u)) u = `http://${u}`; load(p, u); };
+    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') go(); });
+    el.querySelector('.hd').onclick = (e) => {
+      const a = e.target.closest('button')?.dataset.a;
+      if (a === 'go') go();
+      if (a === 're') load(p, p.prevUrl);
+      if (a === 'ext' && p.prevUrl) send({ t: 'open', url: p.prevUrl });
+      if (a === 'x') togglePreview(p);
+    };
+    el.addEventListener('pointerdown', () => select(p.info.id, false), true);
+    place(p);
+    scheduleRender();
+  }
+  if (url) load(p, url);
+}
+function load(p, url) {
+  if (!url || !p.prevEl) return;
+  p.prevUrl = url;
+  p.prevEl.querySelector('input').value = url;
+  const f = p.prevEl.querySelector('iframe');
+  f.src = 'about:blank';
+  requestAnimationFrame(() => (f.src = url));
+}
+function togglePreview(p) {
+  if (p.prevEl) { p.prevEl.remove(); p.prevEl = null; drawWires(); scheduleRender(); return; }
+  const port = (p.info.ports || [])[0] || [...panes.values()].find((q) => q.info.parent === p.info.id && q.info.ports?.length)?.info.ports[0];
+  openPreview(p, port ? `http://localhost:${port}/` : '');
+  if (!port) p.prevEl.querySelector('input').focus();
+}
+function onPreview(m) {
+  const p = panes.get(m.id);
+  if (!p) return;
+  if (m.action === 'close') { if (p.prevEl) togglePreview(p); return; }
+  if (m.action === 'reload') { if (p.prevEl) load(p, p.prevUrl); return; }
+  openPreview(p, m.url);
 }
 
 // ---------- git: branch, ports, changes panel ----------

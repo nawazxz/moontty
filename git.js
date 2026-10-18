@@ -105,3 +105,35 @@ async function removeWorktree(wt) {
 }
 
 module.exports = { addWorktree, info, diff, merge, removeWorktree };
+
+// ---------- pull requests (GitHub CLI) ----------
+const gh = (dir, args) => new Promise((res) => execFile('gh', args, { cwd: dir, maxBuffer: 4 << 20, timeout: 20000 }, (e, out, err) => res({ out: String(out), err: String(err).trim(), code: e ? e.code ?? 1 : 0 })));
+
+// { number, state, draft, url, checks: pass|fail|pending|none, review } or null when the branch has no PR.
+async function pr(dir, branch) {
+  if (!branch) return null;
+  const r = await gh(dir, ['pr', 'view', branch, '--json', 'number,state,isDraft,url,reviewDecision,statusCheckRollup']);
+  if (r.code) return null;
+  let d;
+  try { d = JSON.parse(r.out); } catch { return null; }
+  const runs = d.statusCheckRollup || [];
+  const bad = /^(FAILURE|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED|STARTUP_FAILURE)$/;
+  const checks = !runs.length ? 'none'
+    : runs.some((c) => bad.test(c.conclusion || c.state || '')) ? 'fail'
+    : runs.some((c) => (c.status && c.status !== 'COMPLETED') || c.state === 'PENDING') ? 'pending' : 'pass';
+  return { number: d.number, state: d.isDraft ? 'DRAFT' : d.state, url: d.url, checks, review: d.reviewDecision || '' };
+}
+
+// Push the mission branch and open a PR against the branch it started from.
+async function openPr(wt) {
+  const dirty = (await git(wt.top, ['status', '--porcelain'])).out.trim();
+  if (dirty) return { ok: false, msg: `${dirty.split('\n').length} uncommitted file(s); commit them first` };
+  const push = await git(wt.top, ['push', '-u', 'origin', wt.branch]);
+  if (push.code) return { ok: false, msg: `push failed: ${push.err.split('\n').find(Boolean) || 'no origin remote?'}` };
+  const r = await gh(wt.top, ['pr', 'create', '--fill', '--base', wt.base, '--head', wt.branch]);
+  if (r.code) return { ok: false, msg: `gh pr create failed: ${r.err.split('\n').find(Boolean) || 'unknown error'}` };
+  return { ok: true, msg: `opened ${r.out.trim()}`, url: r.out.trim() };
+}
+
+module.exports.pr = pr;
+module.exports.openPr = openPr;

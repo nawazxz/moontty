@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const { cost } = require('./pricing');
 const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const MAX_STEPS = 80;
 const MAX_TICKS = 600;
@@ -108,6 +109,8 @@ function ingest(a, records) {
       if (m.usage) {
         const ctx = (m.usage.input_tokens || 0) + (m.usage.cache_read_input_tokens || 0) + (m.usage.cache_creation_input_tokens || 0);
         if (ctx) a.ctx = ctx;
+        // One API message is logged as several lines (one per content block); keep the last per id.
+        if (m.id) a.usage.set(m.id, { model: m.model, in: m.usage.input_tokens || 0, out: m.usage.output_tokens || 0, cw: m.usage.cache_creation_input_tokens || 0, cr: m.usage.cache_read_input_tokens || 0 });
       }
       if (m.model && !m.model.startsWith('<')) a.model = m.model;
       for (const b of m.content || []) {
@@ -132,14 +135,20 @@ function ingest(a, records) {
 }
 
 function newAgent(id, sub) {
-  return { id, sub, steps: [], ticks: [], ctx: 0, model: '', tools: 0, errors: 0, done: false, startedAt: 0, lastAt: 0, prompt: '', report: '', lastText: '' };
+  return { id, sub, steps: [], ticks: [], usage: new Map(), ctx: 0, model: '', tools: 0, errors: 0, done: false, startedAt: 0, lastAt: 0, prompt: '', report: '', lastText: '' };
 }
 
 function publicAgent(a, file, call, unit) {
   const now = Date.now();
   const status = a.done ? 'done' : now - mtime(file) > STALE_MS ? 'stopped' : 'running';
   const last = a.steps[a.steps.length - 1];
+  const spent = { in: 0, out: 0, cw: 0, cr: 0, usd: 0 };
+  for (const u of a.usage.values()) {
+    spent.in += u.in; spent.out += u.out; spent.cw += u.cw; spent.cr += u.cr;
+    spent.usd += cost(u.model, u);
+  }
   return {
+    spent,
     id: a.id, name: a.name || a.id, type: a.type, status, call, unit,
     ctx: a.ctx, model: a.model, ticks: a.ticks,
     startedAt: a.startedAt, lastAt: a.lastAt, tools: a.tools, errors: a.errors,
@@ -176,7 +185,9 @@ class CrewWatcher {
       .map((f) => ({ sid: f.slice(0, -6), m: mtime(path.join(dir, f)) }))
       .filter((c) => c.m >= since && (!claimed.has(c.sid) || c.sid === this.sid))
       .sort((x, y) => y.m - x.m);
-    const pick = cands[0]?.sid || null;
+    // Hooks report the exact session id; trust it over the newest-file guess.
+    const pinned = this.s.claudeSid && files.includes(this.s.claudeSid + '.jsonl') ? this.s.claudeSid : null;
+    const pick = pinned || cands[0]?.sid || null;
     if (pick && pick !== this.sid) { this.sid = pick; this.reset(); }
     this.dir = dir;
     return this.sid;
