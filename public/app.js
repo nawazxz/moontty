@@ -268,7 +268,7 @@ function addPane(info) {
     <div class="bar"><span class="led"></span><b class="nm"></b>
       <span class="who"><svg class="moon" viewBox="0 0 24 24"><path d="${MOON}"/></svg>ZERO</span>
       <span class="meta"></span><span class="gitb"></span><span class="ports"></span><span class="now"></span>
-      <span class="acts"><button data-a="shell" title="Open a plain shell beside this mission">+ shell</button><button data-a="preview" title="Browser preview beside this mission">preview</button><button data-a="diff">changes</button><button data-a="pr" hidden>open pr</button><button data-a="merge" hidden>merge</button><button data-a="restart">restart</button><button data-a="kill">end</button></span></div>
+      <span class="acts"><button data-a="shell" title="Open a plain shell beside this mission">+ shell</button><button data-a="preview" title="Browser preview beside this mission">preview</button><button data-a="diff">changes</button><button data-a="rename">rename</button><button data-a="pr" hidden>open pr</button><button data-a="merge" hidden>merge</button><button data-a="restart">restart</button><button data-a="kill">end</button></span></div>
     <div class="term"></div>
     <div class="big"><span class="led"></span><b></b><span class="bn"></span></div>
     <i class="grip"></i>`;
@@ -295,14 +295,18 @@ function addPane(info) {
   const id = info.id;
   const bar = el.querySelector('.bar');
   bar.addEventListener('pointerdown', (e) => {
-    if (e.button || e.target.closest('button')) return;
+    if (e.button || e.target.closest('button') || e.target.isContentEditable) return;
     select(id);
     const r = W[id], ox = r.x, oy = r.y;
     drag(e, (dx, dy) => { r.x = Math.round(ox + dx); r.y = Math.round(oy + dy); place(p); }, save);
   });
-  bar.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) focusMission(id); });
+  bar.addEventListener('dblclick', (e) => { if (!e.target.closest('button, .nm')) focusMission(id); });
+  const nm = bar.querySelector('.nm');
+  nm.title = 'Double-click to rename';
+  nm.addEventListener('dblclick', (e) => { e.stopPropagation(); rename(p); });
   bar.querySelector('.acts').onclick = (e) => {
     const a = e.target.closest('button')?.dataset.a;
+    if (a === 'rename') rename(p);
     if (a === 'restart') send({ t: 'restart', id });
     if (a === 'diff') toggleDiff(p);
     if (a === 'shell') send({ t: 'create', name: `${p.info.name} shell`, cwd: p.info.cwd, cmd: '', parent: id });
@@ -340,6 +344,34 @@ function addPane(info) {
   el.querySelector('.big').onclick = () => focusMission(id);
   el.addEventListener('pointerdown', () => { if (current !== id) select(id, false); }, true);
   new ResizeObserver(() => refit(p)).observe(el.querySelector('.term'));
+}
+
+// Rename in place on the title bar: Enter or clicking away saves, Esc cancels.
+function rename(p) {
+  const nm = p.el.querySelector('.nm');
+  if (nm.isContentEditable) return;
+  select(p.info.id, false);
+  nm.contentEditable = 'true';
+  nm.spellcheck = false;
+  nm.focus();
+  getSelection().selectAllChildren(nm);
+  const done = (keep) => {
+    nm.removeEventListener('keydown', key);
+    nm.removeEventListener('blur', blur);
+    nm.contentEditable = 'false';
+    const v = nm.textContent.replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (keep && v && v !== p.info.name) { p.info.name = v; send({ t: 'rename', id: p.info.id, name: v }); }
+    nm.textContent = p.info.name;
+    scheduleRender(p.info.id);
+  };
+  const key = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); done(true); p.term.focus(); }
+    else if (e.key === 'Escape') { e.preventDefault(); done(false); p.term.focus(); }
+  };
+  const blur = () => done(true);
+  nm.addEventListener('keydown', key);
+  nm.addEventListener('blur', blur);
 }
 
 function place(p) {
@@ -394,7 +426,7 @@ function render(only) {
     p.el.classList.toggle('on', id === current);
     p.el.classList.toggle('waiting', st === 'waiting');
     p.el.querySelectorAll('.led').forEach((l) => (l.className = `led ${st}`));
-    p.el.querySelector('.nm').textContent = p.info.name;
+    if (!p.el.querySelector('.nm').isContentEditable) p.el.querySelector('.nm').textContent = p.info.name;
     p.el.querySelector('.big b').textContent = p.info.name;
     p.el.querySelector('.who').style.display = main ? '' : 'none';
     p.el.querySelector('.meta').textContent = main

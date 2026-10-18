@@ -57,6 +57,7 @@ kbd { font: 500 9.5px var(--mono); color: var(--mute); margin-left: 6px; }
   cursor: move; user-select: none; white-space: nowrap; overflow: hidden;
 }
 .bar .nm { font: 800 15px var(--disp); letter-spacing: .07em; text-transform: uppercase; }
+.bar .nm[contenteditable="true"] { outline: 1px solid var(--amber); outline-offset: 2px; padding: 0 4px; cursor: text; user-select: text; -webkit-user-select: text; text-transform: none; }
 .bar .who { display: flex; align-items: center; gap: 4px; font: 700 10px var(--mono); letter-spacing: .12em; color: var(--amber); }
 .bar .who .moon { width: 11px; height: 11px; }
 .bar .meta { font: 10px var(--mono); color: var(--mute); }

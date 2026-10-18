@@ -2,8 +2,19 @@
 # Builds a self-contained Moontty.app (server, node and dtach inside, Apple Silicon + Intel)
 # and wraps it in dist/Moontty.dmg to hand to teammates. Nothing to install on their side but
 # Claude Code. Unsigned (ad-hoc), so first open needs the quarantine step in the READ ME.
-#   NODE_BIN=/path/to/universal/node DTACH_BIN=/path/to/universal/dtach mac/package.sh
+#   NODE_BIN=/path/to/universal/node DTACH_BIN=/path/to/universal/dtach mac/package.sh [arm64|x86_64]
+# With an arch it builds a thin app for that chip only (about half the size): Moontty-AppleSilicon.dmg
+# or Moontty-Intel.dmg. Without one it builds a universal Moontty.dmg.
 set -e
+ARCH="$1"
+case "$ARCH" in
+  arm64) ARCHS=(arm64); NAME=Moontty-AppleSilicon; PTY=darwin-arm64 ;;
+  x86_64) ARCHS=(x86_64); NAME=Moontty-Intel; PTY=darwin-x64 ;;
+  "") ARCHS=(arm64 x86_64); NAME=Moontty; PTY= ;;
+  *) echo "arch must be arm64 or x86_64"; exit 1 ;;
+esac
+# one chip: keep only its slice of a universal binary
+slice() { if [ -n "$ARCH" ]; then lipo "$1" -thin "$ARCH" -output "$2"; else cp "$1" "$2"; fi; }
 HERE="${0:A:h}"; DECK="${HERE:h}"; DIST="$DECK/dist"; OUT="$DIST/pkg/Moontty.app"
 : "${NODE_BIN:?set NODE_BIN to a universal node binary}"
 : "${DTACH_BIN:?set DTACH_BIN to a universal dtach binary}"
@@ -13,8 +24,8 @@ rm -rf "$DIST/pkg"; mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources/app"
 
 # native window, both architectures
 TMP="$(mktemp -d)"
-for a in arm64 x86_64; do swiftc -O -target $a-apple-macos12 -o "$TMP/Moontty-$a" "$HERE/main.swift" -framework Cocoa -framework WebKit; done
-lipo -create "$TMP/Moontty-arm64" "$TMP/Moontty-x86_64" -output "$OUT/Contents/MacOS/Moontty"
+for a in $ARCHS; do swiftc -O -target $a-apple-macos12 -o "$TMP/Moontty-$a" "$HERE/main.swift" -framework Cocoa -framework WebKit; done
+lipo -create "$TMP"/Moontty-* -output "$OUT/Contents/MacOS/Moontty"
 
 # icon: HTML -> 1024 PNG (headless Chrome) -> iconset -> icns
 ICONSET="$TMP/AppIcon.iconset"; mkdir -p "$ICONSET"
@@ -31,9 +42,10 @@ APP="$OUT/Contents/Resources/app"
 git -C "$DECK" ls-files | grep -vE '^(mac|docs|brand|old-ui-v4|dist)/' | while read -r f; do mkdir -p "$APP/${f:h}"; cp "$DECK/$f" "$APP/$f"; done
 cp -R "$DECK/node_modules" "$APP/"
 rm -rf "$APP"/node_modules/node-pty/prebuilds/win32-*
+[ -n "$PTY" ] && find "$APP/node_modules/node-pty/prebuilds" -mindepth 1 -maxdepth 1 ! -name "$PTY" -exec rm -rf {} +
 chmod +x "$APP"/node_modules/node-pty/prebuilds/*/spawn-helper "$APP/deck" "$APP/hook.sh" "$APP"/bin/*
-cp "$DTACH_BIN" "$APP/bin/dtach"
-cp "$NODE_BIN" "$OUT/Contents/Resources/node"
+slice "$DTACH_BIN" "$APP/bin/dtach"
+slice "$NODE_BIN" "$OUT/Contents/Resources/node"
 
 cat > "$OUT/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -74,8 +86,8 @@ agent's exact status; a backup is saved next to it.
 
 Optional: brew install gh && gh auth login   (pull request status)
 TXT
-rm -f "$DIST/Moontty.dmg"
-hdiutil create -volname Moontty -srcfolder "$STAGE" -ov -format UDZO "$DIST/Moontty.dmg" >/dev/null
+rm -f "$DIST/$NAME.dmg"
+hdiutil create -volname Moontty -srcfolder "$STAGE" -ov -format UDZO "$DIST/$NAME.dmg" >/dev/null
 rm -rf "$STAGE"
 echo "app: $OUT ($(du -sh "$OUT" | cut -f1))"
-echo "dmg: $DIST/Moontty.dmg ($(du -sh "$DIST/Moontty.dmg" | cut -f1))"
+echo "dmg: $DIST/$NAME.dmg ($(du -sh "$DIST/$NAME.dmg" | cut -f1))"
