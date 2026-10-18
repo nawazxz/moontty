@@ -151,7 +151,7 @@ function publicAgent(a, file, call, unit) {
   }
   return {
     spent,
-    id: a.id, name: a.name || a.id, type: a.type, status, call, unit,
+    id: a.id, name: a.name || a.id, type: a.type, status, call, unit, parent: a.parent || null, depth: a.depth || 1,
     ctx: a.ctx, model: a.model, ticks: a.ticks,
     startedAt: a.startedAt, lastAt: a.lastAt, tools: a.tools, errors: a.errors,
     now: last ? (last.k === 'tool' ? `${last.name} · ${last.d}` : last.d) : 'starting…',
@@ -219,6 +219,7 @@ class CrewWatcher {
         try {
           const meta = JSON.parse(fs.readFileSync(path.join(subDir, f.replace(/\.jsonl$/, '.meta.json')), 'utf8'));
           e.a.name = meta.description; e.a.type = meta.agentType; e.a.depth = meta.spawnDepth;
+          e.a.parent = meta.parentAgentId || null; e.a.spawnTool = meta.toolUseId || null;
         } catch {}
         this.subs.set(id, e);
       }
@@ -229,6 +230,16 @@ class CrewWatcher {
     const crew = [...this.subs.values()]
       .sort((x, y) => x.a.startedAt - y.a.startedAt)
       .map((e, i) => publicAgent(e.a, e.file, CALLSIGNS[(off + i) % CALLSIGNS.length], i + 1));
+    // Who spawned whom: meta names the parent agent; older transcripts only give the spawning
+    // tool call, so find which agent's log holds it. No parent means the lead (ZERO) sent it.
+    const byTool = new Map();
+    for (const [id, e] of this.subs) for (const st of e.a.steps) if (st.toolId) byTool.set(st.toolId, id);
+    const known = new Set(crew.map((a) => a.id));
+    for (const a of crew) {
+      const e = this.subs.get(a.id);
+      if (!a.parent && e.a.spawnTool && byTool.has(e.a.spawnTool)) a.parent = byTool.get(e.a.spawnTool);
+      if (a.parent && !known.has(a.parent)) a.parent = null;
+    }
     const mainFile = path.join(this.dir, this.sid + '.jsonl');
     const payload = { sessionId: this.sid, main: publicAgent(this.main, mainFile, 'ZERO', 0), crew };
     const json = JSON.stringify(payload);

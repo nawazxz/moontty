@@ -454,29 +454,50 @@ function insignia(call, size = 36) {
 }
 
 // ---------- crew nodes ----------
-const NODE_W = 290, NODE_H = 136, OPEN_H = 440, GAP = 14;
-// Default spot: stacked in a column (or columns) to the right of the mission window.
-// Stacking uses each node's real height, so an expanded node pushes the rest down.
-function slot(pid, key) {
+const NODE_W = 290, NODE_H = 136, OPEN_H = 440, GAP = 14, COL = NODE_W + 70;
+// Default spots form a tree to the right of the mission: the team ZERO sent out in the first
+// column, each member's own subagents in the next column lined up beside it, and so on.
+// Heights are real, so an expanded node pushes its subtree down. Dragged nodes keep their spot.
+const treeCache = new Map(); // pid -> Map(key -> { dx, dy })
+function crewTree(pid) {
+  if (treeCache.has(pid)) return treeCache.get(pid);
   const r = W[pid];
-  const per = Math.max(3, Math.floor((r.h + 40) / (NODE_H + GAP)));
-  const mine = [...nodes.entries()].filter(([k]) => k.startsWith(`${pid}:`)).sort((a, b) => a[1].dataset.i - b[1].dataset.i);
-  const i = mine.findIndex(([k]) => k === key);
-  const col = Math.floor(i / per);
-  let dy = 0;
-  for (let j = col * per; j < i; j++) dy += (mine[j][1].classList.contains('open') ? OPEN_H : NODE_H) + GAP;
-  return { dx: r.w + 120 + col * (NODE_W + 30), dy };
+  const out = new Map();
+  const list = panes.get(Number(pid))?.crew?.crew || [];
+  const kids = new Map();
+  for (const a of list) {
+    const k = a.parent || '';
+    if (!kids.has(k)) kids.set(k, []);
+    kids.get(k).push(a);
+  }
+  const h = (a) => nodes.get(`${pid}:${a.id}`)?.offsetHeight || NODE_H;
+  const span = (a) => {
+    const c = kids.get(a.id) || [];
+    const cs = c.reduce((t, b) => t + span(b), 0) + GAP * Math.max(0, c.length - 1);
+    return Math.max(h(a), cs);
+  };
+  const lay = (a, x, y) => {
+    out.set(`${pid}:${a.id}`, { dx: x, dy: y });
+    let cy = y;
+    for (const b of kids.get(a.id) || []) { lay(b, x + COL, cy); cy += span(b) + GAP; }
+  };
+  let y = 0;
+  for (const a of kids.get('') || []) { lay(a, r.w + 120, y); y += span(a) + GAP; }
+  treeCache.set(pid, out);
+  return out;
 }
 function nodePos(key) {
   const pid = key.split(':')[0];
   const r = W[pid];
-  const o = C[key] || slot(pid, key);
+  const o = C[key] || crewTree(pid).get(key) || { dx: r.w + 120, dy: 0 };
   return { x: r.x + o.dx, y: r.y + o.dy };
 }
 
 function renderCrew(p) {
   const id = p.info.id;
   const live = new Set();
+  const calls = new Map((p.crew?.crew || []).map((a) => [a.id, a.call]));
+  for (const a of p.crew?.crew || []) a.parentCall = a.parent ? calls.get(a.parent) : '';
   (p.crew?.crew || []).forEach((a, i) => {
     const key = `${id}:${a.id}`;
     live.add(key);
@@ -497,7 +518,7 @@ function makeNode(key, pid) {
   n.querySelector('.hd').addEventListener('pointerdown', (e) => {
     if (e.button) return;
     n.style.zIndex = ++zTop;
-    const o = { ...(C[key] || slot(pid, key)) };
+    const o = { ...(C[key] || crewTree(pid).get(key) || { dx: 0, dy: 0 }) };
     drag(e, (dx, dy) => { C[key] = { dx: Math.round(o.dx + dx), dy: Math.round(o.dy + dy) }; placeCrew(pid); }, (moved) => {
       if (moved) return save();
       n.classList.toggle('open'); // click: expand to the full orders + log
@@ -516,7 +537,7 @@ function fill(n, a) {
     hd.querySelector('.ins').innerHTML = insignia(a.call, 20);
     hd.querySelector('.cs').textContent = a.call;
   }
-  hd.querySelector('.rl').textContent = `${unitNo(a.unit)} · ${role(a)}`;
+  hd.querySelector('.rl').textContent = `${unitNo(a.unit)} · ${role(a)}${a.parentCall ? ` · from ${a.parentCall}` : ''}`;
   const t = hd.querySelector('.t');
   t.dataset.since = a.status === 'running' ? a.startedAt : '';
   t.textContent = `T+${fmtDur((a.status === 'running' ? Date.now() : a.lastAt) - a.startedAt)}`;
@@ -536,6 +557,7 @@ function fill(n, a) {
 
 function placeCrew(pid, wires = true) {
   if (!W[pid]) return;
+  treeCache.delete(String(pid));
   for (const [k, n] of nodes) {
     if (!k.startsWith(`${pid}:`)) continue;
     const q = nodePos(k);
@@ -554,6 +576,16 @@ function drawWires() {
     const r = W[pid];
     if (!r) continue;
     const q = nodePos(k);
+    const st0 = n._a?.status || '';
+    const par = n._a?.parent && nodes.get(`${pid}:${n._a.parent}`);
+    if (par) {
+      // subagent of a crew member: wire from its parent's header
+      const pq = nodePos(`${pid}:${n._a.parent}`);
+      const x1 = pq.x + par.offsetWidth, y1 = pq.y + 16, x2 = q.x, y2 = q.y + 16;
+      const c = Math.max(30, Math.abs(x2 - x1) * 0.5);
+      out += `<path class="wire ${st0}" d="M${x1},${y1} C${x1 + c},${y1} ${x2 - c},${y2} ${x2},${y2}"/><circle class="port src" cx="${x1}" cy="${y1}" r="3"/><circle class="port ${st0}" cx="${x2}" cy="${y2}" r="3"/>`;
+      continue;
+    }
     const right = q.x + n.offsetWidth / 2 >= r.x + r.w / 2;
     const x1 = right ? r.x + r.w : r.x, y1 = r.y + 15;
     const x2 = right ? q.x : q.x + n.offsetWidth, y2 = q.y + 16;
