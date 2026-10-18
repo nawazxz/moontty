@@ -1,4 +1,4 @@
-/* NIGHTSHIFT: one dark canvas. Missions float as terminals, crew hang off them on wires.
+/* NIGHTCAFE: one dark canvas. Missions float as terminals, crew hang off them on wires.
    Terminal.app grays, low contrast, sodium amber for anything alive. No rounded corners. */
 :root {
   --bg: #1e1e1e;
@@ -176,3 +176,63 @@ dialog input:focus { border-color: var(--amber); }
 .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: #3a3a3a; }
 .node .log::-webkit-scrollbar { width: 6px; }
 .node .log::-webkit-scrollbar-thumb { background: #3a3a3a; }
+
+/* ---------- git on the title bar ---------- */
+.bar .gitb { display: flex; gap: 6px; font: 10px var(--mono); color: var(--mute); }
+.gitb .br { color: var(--dim); }
+.gitb .br::before { content: "⎇ "; color: var(--mute); }
+.gitb .br.own { color: var(--amber); }
+.gitb .dt { color: #c9a35a; }
+.gitb .ah { color: var(--green); }
+.bar .ports { display: flex; gap: 2px; }
+.ports button { background: none; border: 1px solid var(--line2); padding: 1px 5px; font: 10px var(--mono); color: var(--green); }
+.ports button:hover { border-color: var(--green); }
+.acts button.on { color: var(--amber); }
+
+/* ---------- changes panel: hangs under its mission ---------- */
+.diffp { position: absolute; height: 440px; display: flex; flex-direction: column; background: var(--win); border: 1px solid var(--line); border-top: 2px solid #5c4724; box-shadow: 0 24px 60px rgba(0,0,0,.45); }
+.diffp .hd { height: 28px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 4px 0 10px; background: var(--chrome); border-bottom: 1px solid var(--line); }
+.diffp .hd b { font: 800 14px var(--disp); letter-spacing: .12em; color: var(--amber); }
+.diffp .hd .sum { flex: 1; font: 10px var(--mono); color: var(--dim); }
+.diffp .hd button { background: none; border: 0; padding: 5px 6px; color: var(--mute); font: 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.diffp .hd button:hover { color: var(--text); }
+.diffp .bd { flex: 1; min-height: 0; display: flex; }
+.diffp .files { width: 230px; flex: none; overflow: auto; border-right: 1px solid var(--line); padding: 4px 0; font: 11px var(--mono); }
+.diffp .f { padding: 3px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+.diffp .f[data-i] { cursor: pointer; }
+.diffp .f[data-i]:hover { background: var(--chrome); color: var(--text); }
+.diffp .s { display: inline-block; width: 30px; font-size: 9px; letter-spacing: .06em; color: var(--mute); }
+.diffp .s.add, .diffp .s.new { color: var(--green); }
+.diffp .s.del { color: var(--red); }
+.diffp .s.mod, .diffp .s.ren { color: var(--amber); }
+.diffp .dx { flex: 1; min-width: 0; margin: 0; overflow: auto; padding: 4px 0 20px; font: 11.5px/1.45 var(--mono); color: #bdbdbd; user-select: text; cursor: text; }
+.diffp .dx div { padding: 0 12px; white-space: pre; }
+.diffp .dx .fh { margin-top: 10px; padding: 4px 12px; background: var(--chrome); color: var(--text); font-weight: 700; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.diffp .dx .fh:first-child { margin-top: 0; }
+.diffp .dx .hk { color: #6eaee0; opacity: .75; }
+.diffp .dx .ad { background: rgba(156,196,99,.09); color: #b5d88a; }
+.diffp .dx .rm { background: rgba(224,86,106,.09); color: #ec8590; }
+
+/* dialog checkbox row */
+dialog label.chk { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 9px; row-gap: 3px; }
+dialog label.chk input { width: 14px; height: 14px; margin: 0; accent-color: var(--amber); }
+dialog label.chk em { grid-column: 2; font: normal 10.5px/1.4 var(--ui); color: var(--mute); }
+dialog label.chk input { appearance: none; -webkit-appearance: none; padding: 0; background: var(--bg); border: 1px solid var(--line2); display: grid; place-content: center; cursor: pointer; }
+dialog label.chk input:checked { background: var(--amber); border-color: var(--amber); }
+dialog label.chk input:checked::after { content: ""; width: 6px; height: 6px; background: #1e1e1e; }
+
+/* resume list in the new mission dialog */
+#history { display: flex; flex-direction: column; margin: 4px 0 6px; max-height: 190px; overflow: auto; }
+#history .lbl { font: 10px var(--mono); color: var(--mute); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 5px; }
+#history button { display: flex; gap: 10px; text-align: left; background: none; border: 0; border-left: 2px solid transparent; padding: 5px 8px; font: 11.5px var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#history button em { flex: none; width: 30px; font-style: normal; color: var(--mute); }
+#history button:hover { background: var(--bg); color: var(--text); }
+#history button.on { border-left-color: var(--amber); color: var(--amber); background: var(--bg); }
+
+/* ⌘F find bar */
+#find { position: fixed; top: 46px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--node); border: 1px solid var(--line2); border-top: 2px solid var(--amber); box-shadow: 0 16px 40px rgba(0,0,0,.5); }
+#find[hidden] { display: none; }
+#find span { font: 800 13px var(--disp); letter-spacing: .12em; color: var(--amber); }
+#find input { width: 260px; background: var(--bg); border: 1px solid var(--line); color: var(--text); padding: 5px 8px; font: 12px var(--mono); outline: none; }
+#find input:focus { border-color: var(--amber); }
+#find em { font: normal 10px var(--mono); color: var(--red); min-width: 52px; }

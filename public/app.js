@@ -6,7 +6,7 @@ let zTop = 10;
 const seen = new Map(); // `${pane}:${agent}` -> { status, steps }
 
 const $ = (s) => document.querySelector(s);
-// Inside Nightshift.app the page can talk to the native shell (notifications, dock badge).
+// Inside Nightcafe.app the page can talk to the native shell (notifications, dock badge).
 const native = (msg) => window.webkit?.messageHandlers?.deck?.postMessage(msg);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const LABEL = { working: 'active', waiting: 'needs you', idle: 'standby', exited: 'offline' };
@@ -40,11 +40,15 @@ function connect() {
     else if (m.t === 'replay') { const p = panes.get(m.id); if (p) { p.term.reset(); p.term.write(m.data); } }
     else if (m.t === 'status') onStatus(m);
     else if (m.t === 'crew') onCrew(m);
-    else if (m.t === 'created') setTimeout(() => focusMission(m.id), 80);
+    else if (m.t === 'created') { setTimeout(() => focusMission(m.id), 80); if (m.note) setTimeout(() => panes.get(m.id) && toast(panes.get(m.id), m.note, 'idle'), 400); }
+    else if (m.t === 'git') onGit(m);
+    else if (m.t === 'history') onHistory(m);
+    else if (m.t === 'diff') onDiff(m);
+    else if (m.t === 'merged') { const p = panes.get(m.id); if (p) toast(p, m.msg, m.ok ? 'done' : 'waiting'); send({ t: 'diff', id: m.id }); }
   };
 }
 const send = (m) => ws?.readyState === 1 && ws.send(JSON.stringify(m));
-// Nightshift.app drops: native side hands over shell-escaped paths and the drop point.
+// Nightcafe.app drops: native side hands over shell-escaped paths and the drop point.
 window.dropPaths = (text, x, y) => {
   const hit = [...panes.entries()].find(([, p]) => p.el.contains(document.elementFromPoint(x, y)));
   const id = hit ? hit[0] : current;
@@ -154,7 +158,7 @@ canvas.addEventListener('dblclick', (e) => { if (e.target === canvas || e.target
 canvas.addEventListener('wheel', (e) => {
   if (!cam) return;
   if (e.ctrlKey) { e.preventDefault(); zoomTo(e.clientX, e.clientY, cam.z * Math.exp(-e.deltaY * 0.01)); return; }
-  if (e.target.closest('.term, .node.open .log')) return;
+  if (e.target.closest('.term, .node.open .log, .diffp .dx, .diffp .files')) return;
   e.preventDefault();
   flight++;
   cam.x -= e.deltaX;
@@ -185,7 +189,7 @@ function drag(e, move, end) {
 // ---------- missions (floating terminals) ----------
 function syncSessions(infos) {
   const ids = new Set(infos.map((i) => i.id));
-  for (const [id, p] of panes) if (!ids.has(id)) { p.term.dispose(); p.el.remove(); panes.delete(id); }
+  for (const [id, p] of panes) if (!ids.has(id)) { p.term.dispose(); p.el.remove(); p.diffEl?.remove(); panes.delete(id); }
   for (const k of Object.keys(W)) if (!ids.has(Number(k))) delete W[k];
   for (const k of Object.keys(C)) if (!ids.has(Number(k.split(':')[0]))) delete C[k];
   for (const [k, n] of nodes) if (!ids.has(Number(k.split(':')[0]))) { n.remove(); nodes.delete(k); }
@@ -217,8 +221,8 @@ function addPane(info) {
   el.innerHTML = `
     <div class="bar"><span class="led"></span><b class="nm"></b>
       <span class="who"><svg class="moon" viewBox="0 0 24 24"><path d="${MOON}"/></svg>ZERO</span>
-      <span class="meta"></span><span class="now"></span>
-      <span class="acts"><button data-a="restart">restart</button><button data-a="kill">end</button></span></div>
+      <span class="meta"></span><span class="gitb"></span><span class="ports"></span><span class="now"></span>
+      <span class="acts"><button data-a="diff">changes</button><button data-a="merge" hidden>merge</button><button data-a="restart">restart</button><button data-a="kill">end</button></span></div>
     <div class="term"></div>
     <div class="big"><span class="led"></span><b></b><span class="bn"></span></div>
     <i class="grip"></i>`;
@@ -229,10 +233,14 @@ function addPane(info) {
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
+  const search = window.SearchAddon ? new SearchAddon.SearchAddon() : null;
+  if (search) term.loadAddon(search);
+  // ⌘-click opens a link, like Terminal.app (plain clicks stay text selection)
+  if (window.WebLinksAddon) term.loadAddon(new WebLinksAddon.WebLinksAddon((e, url) => { if (e.metaKey) send({ t: 'open', url }); }));
   term.open(el.querySelector('.term'));
   loadGpu(term);
   term.onData((data) => send({ t: 'input', id: info.id, data }));
-  const p = { info, term, fit, el, crew: null, lastSize: '' };
+  const p = { info, term, fit, el, search, crew: null, lastSize: '' };
   panes.set(info.id, p);
   if (!W[info.id]) { W[info.id] = placeNew(); save(); }
   place(p);
@@ -249,8 +257,18 @@ function addPane(info) {
   bar.querySelector('.acts').onclick = (e) => {
     const a = e.target.closest('button')?.dataset.a;
     if (a === 'restart') send({ t: 'restart', id });
-    if (a === 'kill' && confirm(`End mission ${p.info.name}? ZERO and its crew will be stood down.`)) send({ t: 'kill', id });
+    if (a === 'diff') toggleDiff(p);
+    if (a === 'merge') {
+      const wt = p.info.worktree;
+      if (confirm(`Merge ${wt.branch} into ${wt.base}?\n\nThis runs in ${wt.root}. Conflicts are never auto-resolved: the merge is undone and you get a message.`)) send({ t: 'merge', id });
+    }
+    if (a === 'kill' && confirm(`End mission ${p.info.name}? ZERO and its crew will be stood down.`)) {
+      const wt = p.info.worktree;
+      const dropBranch = !!wt && confirm(`Also delete branch ${wt.branch} and its folder?\n\n${wt.top}\n\nUnmerged work on it is lost. Cancel keeps both.`);
+      send({ t: 'kill', id, dropBranch });
+    }
   };
+  bar.querySelector('.ports').onclick = (e) => { const b = e.target.closest('button'); if (b) send({ t: 'open', port: Number(b.dataset.port) }); };
   el.querySelector('.grip').addEventListener('pointerdown', (e) => {
     const r = W[id], ow = r.w, oh = r.h;
     drag(e, (dx, dy) => { r.w = Math.max(420, Math.round(ow + dx)); r.h = Math.max(240, Math.round(oh + dy)); place(p); }, save);
@@ -263,6 +281,7 @@ function addPane(info) {
 function place(p) {
   const r = W[p.info.id];
   Object.assign(p.el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+  if (p.diffEl) Object.assign(p.diffEl.style, { left: `${r.x}px`, top: `${r.y + r.h + DIFF_GAP}px`, width: `${r.w}px` });
   placeCrew(p.info.id);
   renderBeacons();
 }
@@ -310,7 +329,16 @@ function render() {
     p.el.querySelector('.meta').textContent = main
       ? `${fmtModel(main.model)} · ${main.tools} ops · ctx ${fmtK(main.ctx)}${crew.length ? ` · crew ${run}/${crew.length}` : ''}`
       : p.info.cmd || 'shell';
-    p.el.querySelector('.now').textContent = now;
+    const g = p.info.git;
+    const wt = p.info.worktree;
+    p.el.querySelector('.gitb').innerHTML = g
+      ? `<span class="br${wt ? ' own' : ''}">${esc(g.branch || 'detached')}</span>${g.dirty ? `<span class="dt">${g.dirty} changed</span>` : ''}${g.ahead ? `<span class="ah">${g.ahead} ahead</span>` : ''}`
+      : '';
+    p.el.querySelector('.ports').innerHTML = (p.info.ports || []).map((n) => `<button data-port="${n}" title="Open localhost:${n}">:${n}</button>`).join('');
+    p.el.querySelector('[data-a=merge]').hidden = !wt;
+    p.el.querySelector('[data-a=diff]').hidden = !g;
+    p.el.querySelector('[data-a=diff]').classList.toggle('on', !!p.diffEl);
+    p.el.querySelector('.now').textContent = st === 'waiting' && p.waitMsg ? p.waitMsg : now;
     p.el.querySelector('.now').title = p.info.cwd;
     p.el.querySelector('.big .bn').textContent = now;
     renderCrew(p);
@@ -331,7 +359,7 @@ function renderStats() {
     ${waiting ? `<span class="w"><b>${waiting}</b> need you</span>` : ''}
     <span><b>${working}</b>/${panes.size} on shift</span>
     <span><b>${crewRun}</b> crew out</span>` : '';
-  document.title = waiting ? `(${waiting}) NIGHTSHIFT` : 'NIGHTSHIFT';
+  document.title = waiting ? `(${waiting}) NIGHTCAFE` : 'NIGHTCAFE';
   native({ kind: 'badge', count: waiting });
 }
 
@@ -493,6 +521,13 @@ function drawWires() {
     ports.add(`${x1},${y1}`);
   }
   for (const pt of ports) { const [x, y] = pt.split(','); out += `<circle class="port src" cx="${x}" cy="${y}" r="4"/>`; }
+  // changes panel hangs straight below its mission
+  for (const [id, p] of panes) {
+    const r = W[id];
+    if (!p.diffEl || !r) continue;
+    const x = r.x + 40, y1 = r.y + r.h, y2 = y1 + DIFF_GAP;
+    out += `<path class="wire" d="M${x},${y1} L${x},${y2}"/><circle class="port src" cx="${x}" cy="${y1}" r="3"/><circle class="port" cx="${x}" cy="${y2}" r="3"/>`;
+  }
   $('#wires').innerHTML = out;
 }
 
@@ -501,9 +536,10 @@ function onStatus(m) {
   const p = panes.get(m.id);
   if (!p) return;
   p.info.status = m.status;
+  p.waitMsg = m.msg || '';
   scheduleRender();
-  if (m.status === 'waiting') toast(p, 'needs your input', 'waiting');
-  else if (m.status === 'idle' && m.prev === 'working' && m.workedMs > 8000) toast(p, 'is done', 'idle');
+  if (m.status === 'waiting') toast(p, m.msg || 'needs your input', 'waiting');
+  else if (m.status === 'idle' && m.prev === 'working' && m.workedMs > 8000) { toast(p, 'is done', 'idle'); chime(); }
 }
 
 function onCrew(m) {
@@ -518,6 +554,116 @@ function onCrew(m) {
   }
   scheduleRender();
 }
+
+// ---------- git: branch, ports, changes panel ----------
+function onGit(m) {
+  const p = panes.get(m.id);
+  if (!p) return;
+  p.info.git = m.git;
+  p.info.ports = m.ports;
+  if (p.diffEl) send({ t: 'diff', id: m.id }); // keep an open panel live
+  scheduleRender();
+}
+
+const DIFF_GAP = 34;
+function toggleDiff(p) {
+  if (p.diffEl) { p.diffEl.remove(); p.diffEl = null; scheduleRender(); return; }
+  const el = document.createElement('div');
+  el.className = 'diffp';
+  el.innerHTML = `<div class="hd"><b>CHANGES</b><span class="sum">reading…</span><button data-a="x" title="Close">close</button></div><div class="bd"><div class="files"></div><pre class="dx"></pre></div>`;
+  world.appendChild(el);
+  p.diffEl = el;
+  el.querySelector('[data-a=x]').onclick = () => toggleDiff(p);
+  el.querySelector('.files').onclick = (e) => {
+    const f = e.target.closest('[data-i]');
+    const h = f && el.querySelector(`.dx [data-f="${f.dataset.i}"]`);
+    if (h) el.querySelector('.dx').scrollTop = h.offsetTop - 4;
+  };
+  el.addEventListener('pointerdown', () => select(p.info.id, false), true);
+  place(p);
+  send({ t: 'diff', id: p.info.id });
+  scheduleRender();
+}
+
+function onDiff(m) {
+  const p = panes.get(m.id);
+  const el = p?.diffEl;
+  if (!el) return;
+  if (m.error) { el.querySelector('.sum').textContent = m.error; return; }
+  const key = m.text + JSON.stringify(m.files);
+  if (el._key === key) return; // unchanged: keep scroll position
+  el._key = key;
+  const dx = el.querySelector('.dx');
+  const top = dx.scrollTop;
+  const ST = { M: 'mod', A: 'add', D: 'del', R: 'ren', C: 'com', '??': 'new' };
+  el.querySelector('.sum').textContent = m.files.length
+    ? `${m.files.length} file${m.files.length > 1 ? 's' : ''} vs ${m.against}${m.truncated ? ' · truncated' : ''}`
+    : `clean vs ${m.against}`;
+  const order = [];
+  let html = '';
+  for (const ln of m.text.split('\n')) {
+    const fm = /^diff --git a\/.+ b\/(.+)$/.exec(ln);
+    if (fm) { order.push(fm[1]); html += `<div class="fh" data-f="${order.length - 1}">${esc(fm[1])}</div>`; continue; }
+    if (/^(index |--- |\+\+\+ |new file mode|deleted file mode|similarity|rename )/.test(ln)) continue;
+    const c = ln.startsWith('@@') ? 'hk' : ln[0] === '+' ? 'ad' : ln[0] === '-' ? 'rm' : '';
+    html += `<div class="${c}">${esc(ln) || ' '}</div>`;
+  }
+  dx.innerHTML = html || '<div class="hk">nothing changed yet</div>';
+  dx.scrollTop = top;
+  el.querySelector('.files').innerHTML = m.files.map((f) => {
+    const i = order.indexOf(f.path);
+    return `<div class="f"${i >= 0 ? ` data-i="${i}"` : ''} title="${esc(f.path)}"><span class="s ${ST[f.st] || 'mod'}">${esc(f.st === '??' ? 'NEW' : f.st)}</span>${esc(f.path)}</div>`;
+  }).join('');
+}
+
+// Two soft notes when a mission finishes (skipped when muted with ?quiet).
+let actx;
+function chime() {
+  if (location.search.includes('quiet')) return;
+  try {
+    actx = actx || new AudioContext();
+    [[660, 0], [880, 0.12]].forEach(([f, d]) => {
+      const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime + d;
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.08, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+      o.connect(g).connect(actx.destination);
+      o.start(t); o.stop(t + 0.4);
+    });
+  } catch {}
+}
+
+// ---------- find in mission (⌘F) ----------
+const find = $('#find'), findIn = find.querySelector('input');
+const FIND_OPTS = { decorations: { matchBackground: '#e3a23a33', activeMatchBackground: '#e3a23a', matchOverviewRuler: '#e3a23a', activeMatchColorOverviewRuler: '#e3a23a' } };
+function openFind() {
+  if (!panes.get(current)?.search) return;
+  find.hidden = false;
+  findIn.select();
+  findIn.focus();
+}
+function closeFind() {
+  find.hidden = true;
+  const p = panes.get(current);
+  p?.search?.clearDecorations();
+  p?.term.focus();
+}
+function runFind(back) {
+  const p = panes.get(current);
+  if (!p?.search || !findIn.value) return (find.querySelector('em').textContent = '');
+  const ok = back ? p.search.findPrevious(findIn.value, FIND_OPTS) : p.search.findNext(findIn.value, { ...FIND_OPTS, incremental: !back && find._typing });
+  find.querySelector('em').textContent = ok ? '' : 'no match';
+}
+findIn.addEventListener('input', () => { find._typing = true; runFind(); find._typing = false; });
+findIn.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+  else if (e.key === 'Enter') { e.preventDefault(); runFind(e.shiftKey); }
+  e.stopPropagation();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.metaKey && !e.altKey && !e.ctrlKey && e.code === 'KeyF' && !dlg.open) { e.preventDefault(); e.stopPropagation(); openFind(); }
+}, true);
 
 let renderQueued = false;
 function scheduleRender() {
@@ -559,6 +705,7 @@ function openNew() {
   const used = new Set([...panes.values()].map((p) => p.info.name));
   form.name.value = CODENAMES.find((v) => !used.has(v)) || `Op ${panes.size + 1}`;
   form.cwd.value = recent[0] || '~';
+  loadHistory();
   dlg.showModal();
   form.cwd.select();
 }
@@ -566,12 +713,30 @@ window.openNew = openNew;
 $('#newBtn').onclick = openNew;
 $('#wallBtn').onclick = overview;
 form.querySelectorAll('.presets button').forEach((b) => (b.onclick = () => (form.cmd.value = b.dataset.cmd)));
+// Past conversations in the chosen folder: click one to resume it.
+let histT;
+function loadHistory() { clearTimeout(histT); histT = setTimeout(() => send({ t: 'history', cwd: form.cwd.value.trim() || '~' }), 200); }
+form.cwd.addEventListener('input', loadHistory);
+function onHistory(m) {
+  if (m.cwd !== (form.cwd.value.trim() || '~')) return;
+  const ago = (t) => { const s = (Date.now() - t) / 1000; return s < 3600 ? `${Math.max(1, Math.round(s / 60))}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`; };
+  $('#history').innerHTML = m.list.length
+    ? `<span class="lbl">Resume a past conversation</span>` + m.list.map((h) => `<button type="button" data-id="${esc(h.id)}"><em>${ago(h.t)}</em>${esc(h.prompt)}</button>`).join('')
+    : '';
+}
+$('#history').onclick = (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  form.cmd.value = `claude --resume ${b.dataset.id}`;
+  form.ownBranch.checked = false; // the conversation lives with this folder, not a new worktree
+  $('#history').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+};
 dlg.addEventListener('close', () => {
   if (dlg.returnValue !== 'ok') return;
   const cwd = form.cwd.value.trim() || '~';
   const recent = [cwd, ...JSON.parse(localStorage.getItem('deck.dirs') || '[]').filter((d) => d !== cwd)].slice(0, 15);
   localStorage.setItem('deck.dirs', JSON.stringify(recent));
-  send({ t: 'create', name: form.name.value.trim(), cwd, cmd: form.cmd.value.trim() });
+  send({ t: 'create', name: form.name.value.trim(), cwd, cmd: form.cmd.value.trim(), ownBranch: form.ownBranch.checked });
   if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
 });
 

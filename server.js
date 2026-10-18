@@ -8,7 +8,10 @@ const pty = require('node-pty');
 const { Terminal: Headless } = require('@xterm/headless');
 const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
+const { execFile, execFileSync } = require('child_process');
 const { CrewWatcher } = require('./crew');
+const git = require('./git');
+const history = require('./history');
 
 const PORT = Number(process.env.DECK_PORT || 7681);
 const STATE_DIR = process.env.DECK_STATE || path.join(os.homedir(), '.agent-deck');
@@ -16,7 +19,15 @@ const STATE_FILE = path.join(STATE_DIR, 'sessions.json');
 const SCROLLBACK = 400 * 1024; // bytes of raw output kept per session for replay
 const SHELL = process.env.SHELL || '/bin/zsh';
 
+// Each pane's shell runs under dtach, so it outlives the server: a restart re-attaches instead of
+// killing the agents. Socket paths must stay short (macOS caps them near 104 bytes).
+const SOCK_DIR = process.env.DECK_SOCK || path.join(STATE_DIR, 'sock');
+const BUF_DIR = path.join(STATE_DIR, 'buf');
+const DTACH = ['/opt/homebrew/bin/dtach', '/usr/local/bin/dtach', '/usr/bin/dtach'].find((f) => fs.existsSync(f));
+
 fs.mkdirSync(STATE_DIR, { recursive: true });
+fs.mkdirSync(SOCK_DIR, { recursive: true });
+fs.mkdirSync(BUF_DIR, { recursive: true });
 
 const sessions = new Map(); // id -> session
 const clients = new Set();
@@ -43,8 +54,16 @@ function screenText(s) {
   return lines.join('\n');
 }
 
+// Panes running claude report exact state through hooks (hook.sh -> POST /hook).
+// Esc-interrupts send no hook, so "working" falls back to idle once the spinner
+// stops drawing. Panes that never sent a hook use the screen heuristic below.
+const HOOK_SILENCE = 8000;
 function computeStatus(s) {
   if (s.exited) return 'exited';
+  if (s.hook) {
+    if (s.hook === 'working' && Date.now() - s.lastOutput > HOOK_SILENCE) s.hook = 'idle';
+    return s.hook;
+  }
   if (Date.now() - s.lastOutput < 1500) return 'working';
   if (WAITING.some((re) => re.test(screenText(s)))) return 'waiting';
   return 'idle';
@@ -52,7 +71,7 @@ function computeStatus(s) {
 
 // ---------- persistence ----------
 function save() {
-  const list = [...sessions.values()].map(({ id, name, cwd, cmd }) => ({ id, name, cwd, cmd }));
+  const list = [...sessions.values()].map(({ id, name, cwd, cmd, worktree, claudeSid }) => ({ id, name, cwd, cmd, worktree, claudeSid }));
   fs.writeFileSync(STATE_FILE, JSON.stringify(list, null, 2));
 }
 
@@ -74,35 +93,63 @@ function paneEnv(s) {
   const env = { ...process.env };
   const INHERITED = /^(TERM_PROGRAM|TERM_PROGRAM_VERSION|TERM_SESSION_ID|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(ENTRYPOINT|EXECPATH|CHILD_SESSION|SESSION_.*|MESSAGING_.*))$/;
   for (const k of Object.keys(env)) if (INHERITED.test(k)) delete env[k];
-  return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'agent-deck', SHELL_SESSIONS_DISABLE: '1', PROMPT_EOL_MARK: '', AGENT_DECK_ID: String(s.id) };
+  return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'agent-deck', SHELL_SESSIONS_DISABLE: '1', PROMPT_EOL_MARK: '', AGENT_DECK_ID: String(s.id), AGENT_DECK_PORT: String(PORT) };
 }
 
-function spawn(s) {
+const sockOf = (s) => path.join(SOCK_DIR, `${s.id}.sock`);
+const bufOf = (s) => path.join(BUF_DIR, `${s.id}.log`);
+
+// Is a dtach session still holding this pane's shell?
+function alive(sock) {
+  if (!DTACH || !fs.existsSync(sock)) return false;
+  try { execFileSync(DTACH, ['-p', sock], { input: '', stdio: ['pipe', 'ignore', 'ignore'], timeout: 1500 }); return true; } catch { return false; }
+}
+
+// fresh: start a new shell (and the agent command). Otherwise re-attach when the old one is still running.
+function spawn(s, fresh) {
   const cwd = fs.existsSync(expand(s.cwd)) ? expand(s.cwd) : os.homedir();
-  s.pty = pty.spawn(SHELL, ['-l', '-i'], {
+  const sock = sockOf(s);
+  const reattach = !fresh && alive(sock);
+  if (!reattach) try { fs.unlinkSync(sock); } catch {}
+  const args = DTACH ? [DTACH, ['-A', sock, '-E', '-z', '-r', 'winch', SHELL, '-l', '-i']] : [SHELL, ['-l', '-i']];
+  const p = pty.spawn(args[0], args[1], {
     name: 'xterm-256color',
     cols: s.cols || 120,
     rows: s.rows || 32,
     cwd,
     env: paneEnv(s),
   });
+  s.pty = p;
   s.screen?.dispose();
   s.screen = new Headless({ cols: s.cols || 120, rows: s.rows || 32, scrollback: 0, allowProposedApi: true });
   s.exited = false;
+  s.hook = null;
   s.startedAt = Date.now();
   s.lastOutput = Date.now();
-  s.pty.onData((d) => {
+  if (reattach) {
+    // Bring back what was on screen before the restart; dtach's WINCH makes TUIs redraw on top.
+    try { s.buffer = fs.readFileSync(bufOf(s), 'utf8'); } catch { s.buffer = ''; }
+    s.screen.write(s.buffer);
+  } else s.buffer = '';
+  s.bufDirty = false;
+  // Handlers check s.pty so a restarted pane's old PTY can't flip the new one to exited.
+  p.onData((d) => {
+    if (s.pty !== p) return;
     s.buffer += d;
     if (s.buffer.length > SCROLLBACK) s.buffer = s.buffer.slice(-SCROLLBACK);
+    s.bufDirty = true;
     s.lastOutput = Date.now();
     s.screen.write(d);
     broadcast({ t: 'out', id: s.id, data: d });
   });
-  s.pty.onExit(({ exitCode }) => {
+  p.onExit(({ exitCode }) => {
+    if (s.pty !== p) return;
     s.exited = true;
     s.exitCode = exitCode;
     pushStatus(s, true);
   });
+  s.crewData = null;
+  if (reattach) { s.crew = new CrewWatcher(s); return; }
   // Run the agent command inside an interactive shell, so when it quits you
   // land at a prompt in the same pane (like a tmux window).
   // Pin a session id on fresh claude launches so we know which transcript
@@ -113,27 +160,69 @@ function spawn(s) {
     cmd += ` --session-id ${s.claudeSid}`;
   } else s.claudeSid = null;
   s.crew = new CrewWatcher(s);
-  s.crewData = null;
-  if (cmd) setTimeout(() => s.pty.write(cmd + '\r'), 300);
+  if (cmd) setTimeout(() => s.pty === p && p.write(cmd + '\r'), 300);
 }
 
-function createSession({ name, cwd, cmd, id }) {
+// Every process in a pane: the dtach processes for its socket (the master is detached after a
+// server restart, a child of our attach client before that) and everything under them.
+function paneTree(s) {
+  const sock = sockOf(s);
+  const rows = String(execFileSync('ps', ['-Ao', 'pid=,ppid=,args='])).split('\n').map((l) => {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l);
+    return m && { pid: Number(m[1]), ppid: Number(m[2]), args: m[3] };
+  }).filter(Boolean);
+  const pids = rows.filter((r) => /dtach/.test(r.args) && r.args.includes(sock)).map((r) => r.pid);
+  for (let i = 0; i < pids.length; i++) for (const r of rows) if (r.ppid === pids[i] && !pids.includes(r.pid)) pids.push(r.pid);
+  return { pids };
+}
+
+// End a pane for real: the attach client, the dtach master and everything running in it.
+function endPane(s) {
+  try { s.pty.kill(); } catch {}
+  try {
+    const { pids } = paneTree(s);
+    for (const pid of pids.reverse()) try { process.kill(pid, 'SIGHUP'); } catch {}
+    setTimeout(() => { for (const pid of pids) try { process.kill(pid, 'SIGKILL'); } catch {} }, 1500);
+  } catch (e) { console.error('end pane', s.id, e.message); }
+  try { fs.unlinkSync(sockOf(s)); } catch {}
+}
+
+// Screen contents survive a server restart too.
+function flushBuffers() {
+  for (const s of sessions.values()) {
+    if (!s.bufDirty) continue;
+    s.bufDirty = false;
+    try { fs.writeFileSync(bufOf(s), s.buffer); } catch {}
+  }
+}
+setInterval(flushBuffers, 2000);
+
+function createSession({ name, cwd, cmd, id, worktree, ownBranch, claudeSid }, fresh = true) {
   const s = {
     id: id || nextId++,
     name: name || `agent-${nextId}`,
     cwd: cwd || '~',
     cmd: cmd ?? 'claude',
+    worktree: worktree || null,
+    claudeSid: claudeSid || null,
     buffer: '',
     status: 'idle',
   };
+  // "Own branch": the mission works in a fresh git worktree, so parallel agents never touch each other's files.
+  if (ownBranch && !worktree) {
+    try {
+      s.worktree = git.addWorktree(expand(s.cwd), s.name);
+      s.cwd = s.worktree.path;
+    } catch (e) { s.note = `no branch: ${e.message}`; }
+  }
   nextId = Math.max(nextId, s.id + 1);
   sessions.set(s.id, s);
-  spawn(s);
+  spawn(s, fresh);
   return s;
 }
 
 function publicInfo(s) {
-  return { id: s.id, name: s.name, cwd: s.cwd, cmd: s.cmd, status: s.status, startedAt: s.startedAt, exitCode: s.exitCode };
+  return { id: s.id, name: s.name, cwd: s.cwd, cmd: s.cmd, status: s.status, startedAt: s.startedAt, exitCode: s.exitCode, worktree: s.worktree, git: s.git, ports: s.ports };
 }
 
 function broadcast(msg) {
@@ -150,7 +239,7 @@ function pushStatus(s, force) {
   if (st !== s.status || force) {
     const prev = s.status;
     s.status = st;
-    broadcast({ t: 'status', id: s.id, status: st, prev, workedMs: Date.now() - (s.workStart || Date.now()) });
+    broadcast({ t: 'status', id: s.id, status: st, prev, workedMs: Date.now() - (s.workStart || Date.now()), msg: st === 'waiting' ? s.waitMsg || '' : '' });
     if (st === 'working') s.workStart = Date.now();
   }
 }
@@ -173,6 +262,105 @@ setInterval(() => {
   }
 }, 1500);
 
+// Git + listening ports per mission, shown on the title bar. Async so a slow repo never stalls the PTYs.
+let gitBusy = false;
+setInterval(async () => {
+  if (gitBusy || !sessions.size) return;
+  gitBusy = true;
+  try {
+    const ports = await listeningPorts([...sessions.values()].filter((s) => !s.exited));
+    for (const s of sessions.values()) {
+      const info = await git.info(expand(s.cwd), s.worktree);
+      const p = ports.get(s.id) || [];
+      const key = JSON.stringify([info, p]);
+      if (key !== s.gitKey) { s.gitKey = key; s.git = info; s.ports = p; broadcast({ t: 'git', id: s.id, git: info, ports: p }); }
+    }
+  } catch (e) { console.error('git poll', e.message); }
+  gitBusy = false;
+}, 4000);
+
+const run = (cmd, args) => new Promise((res) => execFile(cmd, args, { maxBuffer: 8 << 20 }, (err, out) => res(err && !out ? '' : String(out))));
+
+// pane id -> sorted TCP ports that any process in the pane is listening on. Under dtach the
+// shell hangs off the detached master (found by its socket path), not off our PTY.
+async function listeningPorts(list) {
+  const out = new Map();
+  if (!list.length) return out;
+  const [ps, lsof] = await Promise.all([run('ps', ['-Ao', 'pid=,ppid=,args=']), run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn'])]);
+  const parent = new Map();
+  const roots = new Map(); // root pid -> pane id
+  for (const s of list) roots.set(s.pty.pid, s.id);
+  for (const l of ps.split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l);
+    if (!m) continue;
+    const pid = Number(m[1]), ppid = Number(m[2]);
+    parent.set(pid, ppid);
+    if (ppid === 1 && /dtach/.test(m[3])) for (const s of list) if (m[3].includes(sockOf(s))) roots.set(pid, s.id);
+  }
+  const paneOf = (pid) => { for (let i = 0; pid && i < 64; i++) { if (roots.has(pid)) return roots.get(pid); pid = parent.get(pid); } return null; };
+  let cur = null;
+  for (const l of lsof.split('\n')) {
+    if (l[0] === 'p') cur = paneOf(Number(l.slice(1)));
+    else if (l[0] === 'n' && cur != null) {
+      const port = Number(l.split(':').pop());
+      if (!port) continue;
+      const set = out.get(cur) || new Set();
+      set.add(port);
+      out.set(cur, set);
+    }
+  }
+  for (const [k, v] of out) out.set(k, [...v].sort((a, b) => a - b));
+  return out;
+}
+
+// ---------- hooks ----------
+// Claude Code event -> pane status. idle_prompt fires after 60s of quiet and is not "needs you".
+const NEEDS_YOU = /^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input)$/;
+function onHook(s, ev) {
+  const name = ev.hook_event_name;
+  // Subagents share the parent's session and keep calling tools while the lead waits on you;
+  // crew.js already tracks them, so they never drive the pane status.
+  if (ev.agent_id) return;
+  if (ev.session_id && ev.session_id !== s.claudeSid) {
+    // A different session is either the pane's claude starting fresh (or /clear), or a nested
+    // `claude -p` run from inside it, which must not hijack the pane.
+    const fresh = name === 'SessionStart' && (s.hook === null || ev.source === 'clear');
+    if (s.claudeSid && !fresh) return;
+    s.claudeSid = ev.session_id;
+  }
+  if (name === 'SessionEnd') { s.hook = null; return pushStatus(s); }
+  if (/^(UserPromptSubmit|PostToolUse|PostToolUseFailure|PermissionDenied)$/.test(name)) s.hook = 'working';
+  else if (name === 'PreToolUse') s.hook = ev.tool_name === 'AskUserQuestion' ? 'waiting' : 'working';
+  else if (name === 'PermissionRequest') s.hook = 'waiting';
+  else if (name === 'Notification') {
+    if (NEEDS_YOU.test(ev.notification_type)) s.hook = 'waiting';
+    else if (ev.notification_type === 'idle_prompt') s.hook = 'idle';
+    else return;
+  } else if (name === 'Stop' || name === 'StopFailure') s.hook = 'idle';
+  else if (name === 'SessionStart') s.hook = s.hook || 'idle';
+  else return;
+  if (s.hook === 'waiting') s.waitMsg = ev.message || askText(ev);
+  s.lastOutput = Date.now();
+  pushStatus(s);
+}
+
+// "wants to run: npm test" reads better than a bare tool name.
+function askText(ev) {
+  const i = ev.tool_input || {};
+  if (ev.tool_name === 'AskUserQuestion') return `asks: ${i.questions?.[0]?.question || 'a question'}`;
+  const what = i.command || i.file_path || i.url || i.pattern || '';
+  if (!ev.tool_name) return '';
+  return what ? `wants to ${ev.tool_name === 'Bash' ? 'run' : `use ${ev.tool_name} on`}: ${String(what).replace(/\s+/g, ' ').slice(0, 120)}` : `wants to use ${ev.tool_name}`;
+}
+
+function readBody(req, max = 1 << 20) {
+  return new Promise((res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > max) req.destroy(); });
+    req.on('end', () => res(body));
+  });
+}
+
 // ---------- http ----------
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const ROUTES = {
@@ -180,10 +368,19 @@ const ROUTES = {
   '/vendor/xterm.css': 'node_modules/@xterm/xterm/css/xterm.css',
   '/vendor/addon-fit.js': 'node_modules/@xterm/addon-fit/lib/addon-fit.js',
   '/vendor/addon-webgl.js': 'node_modules/@xterm/addon-webgl/lib/addon-webgl.js',
+  '/vendor/addon-search.js': 'node_modules/@xterm/addon-search/lib/addon-search.js',
+  '/vendor/addon-web-links.js': 'node_modules/@xterm/addon-web-links/lib/addon-web-links.js',
 };
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
+  if (req.method === 'POST' && url === '/hook') {
+    const s = sessions.get(Number(req.headers['x-deck-id']));
+    let ev = {};
+    try { ev = JSON.parse(await readBody(req)); } catch {}
+    if (s && !s.exited) onHook(s, ev);
+    return res.writeHead(204).end();
+  }
   const rel = ROUTES[url] || path.join('public', url === '/' ? 'index.html' : url);
   const file = path.join(__dirname, rel);
   if (!file.startsWith(__dirname)) return res.writeHead(403).end();
@@ -212,15 +409,36 @@ wss.on('connection', (ws, req) => {
     const s = sessions.get(m.id);
     switch (m.t) {
       case 'create': {
-        const ns = createSession(m);
+        const ns = createSession({ name: m.name, cwd: m.cwd, cmd: m.cmd, ownBranch: !!m.ownBranch });
         save();
         pushList();
-        ws.send(JSON.stringify({ t: 'created', id: ns.id }));
+        ws.send(JSON.stringify({ t: 'created', id: ns.id, note: ns.note }));
         break;
       }
       case 'input':
-        if (s && !s.exited) s.pty.write(m.data);
+        if (s && !s.exited) {
+          s.pty.write(m.data);
+          // Answering a prompt (Enter, Esc, or a numbered choice) lets claude carry on; arrow keys
+          // only move the selection, so they must not clear "needs you".
+          if (s.hook === 'waiting' && /^(\r|\x1b|[1-9])$/.test(m.data)) { s.hook = 'working'; s.lastOutput = Date.now(); }
+        }
         break;
+      case 'diff':
+        if (s) git.diff(expand(s.cwd), s.worktree).then((d) => ws.readyState === 1 && ws.send(JSON.stringify({ t: 'diff', id: s.id, ...d })));
+        break;
+      case 'merge':
+        if (s?.worktree) git.merge(s.worktree).then((r) => ws.send(JSON.stringify({ t: 'merged', id: s.id, ...r })));
+        break;
+      case 'open':
+        if (Number.isInteger(m.port) && m.port > 0 && m.port < 65536) execFile('open', [`http://localhost:${m.port}`]);
+        else if (/^https?:\/\/[^\s]+$/.test(m.url || '')) execFile('open', [m.url]);
+        break;
+      case 'history': {
+        let dir = expand(String(m.cwd || '~'));
+        try { dir = fs.realpathSync(dir); } catch {}
+        ws.send(JSON.stringify({ t: 'history', cwd: m.cwd, list: history.list(dir) }));
+        break;
+      }
       case 'resize':
         if (s && !s.exited && m.cols > 0 && m.rows > 0) {
           s.cols = m.cols; s.rows = m.rows;
@@ -232,18 +450,19 @@ wss.on('connection', (ws, req) => {
         break;
       case 'restart':
         if (s) {
-          if (!s.exited) try { s.pty.kill(); } catch {}
-          s.buffer = '\x1b[2J\x1b[H';
-          broadcast({ t: 'replay', id: s.id, data: s.buffer });
-          spawn(s);
-          pushList();
+          endPane(s);
+          broadcast({ t: 'replay', id: s.id, data: '\x1b[2J\x1b[H' });
+          // give the old master a moment to let go of the socket
+          setTimeout(() => { spawn(s, true); save(); pushList(); }, 300);
         }
         break;
       case 'kill':
         if (s) {
-          if (!s.exited) try { s.pty.kill(); } catch {}
+          endPane(s);
           s.screen.dispose();
           sessions.delete(s.id);
+          try { fs.unlinkSync(bufOf(s)); } catch {}
+          if (s.worktree && m.dropBranch) git.removeWorktree(s.worktree).catch((e) => console.error('worktree', e.message));
           save();
           pushList();
         }
@@ -254,11 +473,16 @@ wss.on('connection', (ws, req) => {
 });
 
 // ---------- boot ----------
-for (const def of load()) createSession(def);
+// Re-attach to every pane that is still running; only dead ones start over.
+for (const def of load()) createSession(def, false);
+save();
 server.listen(PORT, '127.0.0.1', () => console.log(`agent-deck on http://localhost:${PORT}`));
 
+// Stopping the server only detaches: the agents keep running in dtach and come back on next start.
+// Without dtach the shells die with us, as before.
 function shutdown() {
-  for (const s of sessions.values()) if (!s.exited) try { s.pty.kill(); } catch {}
+  flushBuffers();
+  for (const s of sessions.values()) try { s.pty.kill(); } catch {}
   process.exit(0);
 }
 process.on('SIGINT', shutdown);

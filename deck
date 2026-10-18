@@ -5,11 +5,19 @@ PORT="${DECK_PORT:-7681}"
 URL="http://localhost:$PORT"
 mkdir -p ~/.agent-deck
 case "$1" in
-  stop) pkill -f "node $DIR/server.js" && echo "agent-deck stopped (all agents killed)"; exit ;;
+  stop)
+    pkill -f "node $DIR/server.js"
+    if [ "$2" = "--all" ]; then
+      pkill -f "dtach -A ${DECK_STATE:-$HOME/.agent-deck}/sock/"; rm -f "${DECK_STATE:-$HOME/.agent-deck}"/sock/*.sock
+      echo "nightcafe stopped, every agent ended"
+    else
+      echo "nightcafe stopped; agents keep running and re-attach on next start (deck stop --all ends them)"
+    fi
+    exit ;;
   log)  tail -f ~/.agent-deck/server.log; exit ;;
 esac
 if ! curl -s -o /dev/null "$URL"; then
   nohup node "$DIR/server.js" >> ~/.agent-deck/server.log 2>&1 &
   for i in {1..30}; do curl -s -o /dev/null "$URL" && break; sleep 0.2; done
 fi
-if [ -d "/Applications/Nightshift.app" ]; then open -a "Nightshift"; else open -na "Google Chrome" --args --app="$URL" --window-size=1500,950; fi
+if [ -d "/Applications/Nightcafe.app" ]; then open -a "Nightcafe"; else open -na "Google Chrome" --args --app="$URL" --window-size=1500,950; fi

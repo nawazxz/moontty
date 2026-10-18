@@ -1,4 +1,4 @@
-// Nightshift.app: a native window around the agent-deck server.
+// Nightcafe.app: a native window around the agent-deck server.
 // The server runs detached, so quitting the app is a "detach": agents keep working.
 import Cocoa
 import WebKit
@@ -56,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1500, height: 940),
                       styleMask: [.titled, .closable, .miniaturizable, .resizable],
                       backing: .buffered, defer: false)
-    window.title = "Nightshift"
+    window.title = "Nightcafe"
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
     window.appearance = NSAppearance(named: .darkAqua)
@@ -64,11 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     window.minSize = NSSize(width: 900, height: 560)
     window.contentView = web
     window.center()
-    window.setFrameAutosaveName("NightshiftMain")
+    window.setFrameAutosaveName("NightcafeMain")
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
 
-    web.loadHTMLString(splash("Starting the night shift…"), baseURL: nil)
+    web.loadHTMLString(splash("Opening the night cafe…"), baseURL: nil)
     ensureServer { ok in
       if ok { self.web.load(URLRequest(url: deckURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)) }
       else { self.web.loadHTMLString(self.splash("Could not start the server. See ~/.agent-deck/server.log"), baseURL: nil) }
@@ -114,8 +114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     a.addButton(withTitle: "Cancel")
     guard a.runModal() == .alertFirstButtonReturn else { return }
     let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-    p.arguments = ["-f", "\(deckDir)/server.js"]
+    // Agents live in dtach and outlive the server, so ending the shift goes through `deck stop --all`.
+    p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+    p.arguments = ["\(deckDir)/deck", "stop", "--all"]
     try? p.run()
     p.waitUntilExit()
     web.loadHTMLString(splash("Shift ended. Standing up a fresh one…"), baseURL: nil)
@@ -133,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       NSApp.dockTile.badgeLabel = n > 0 ? String(n) : nil
     } else if kind == "notify", !NSApp.isActive {
       let n = NSUserNotification()
-      n.title = body["title"] as? String ?? "Nightshift"
+      n.title = body["title"] as? String ?? "Nightcafe"
       n.informativeText = body["body"] as? String
       n.soundName = NSUserNotificationDefaultSoundName
       NSUserNotificationCenter.default.deliver(n)
@@ -176,10 +177,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       i.keyEquivalentModifierMask = mods
       return i
     }
-    add("Nightshift", [
-      item("About Nightshift", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+    add("Nightcafe", [
+      item("About Nightcafe", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
       .separator(),
-      item("Hide Nightshift", #selector(NSApplication.hide(_:)), "h"),
+      item("Hide Nightcafe", #selector(NSApplication.hide(_:)), "h"),
       item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
       .separator(),
       item("Quit (agents keep running)", #selector(NSApplication.terminate(_:)), "q"),
