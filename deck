@@ -12,7 +12,10 @@ case "$1" in
     PIDS=$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null)
     if [ -n "$PIDS" ]; then kill $PIDS; elif [ "$2" != "--all" ]; then echo "moontty was not running on :$PORT"; exit; fi
     if [ "$2" = "--all" ]; then
-      pkill -f "dtach -A ${DECK_STATE:-$HOME/.agent-deck}/sock/"; rm -f "${DECK_STATE:-$HOME/.agent-deck}"/sock/*.sock
+      # let the server exit first, then end every pane and start the next run clean
+      for i in {1..30}; do lsof -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break; sleep 0.1; done
+      ST="${DECK_STATE:-$HOME/.agent-deck}"
+      pkill -f "dtach -A $ST/sock/"; rm -f "$ST"/sock/*.sock(N) "$ST/sessions.json" "$ST"/buf/*.log(N)
       echo "moontty stopped, every agent ended"
     else
       echo "moontty stopped; agents keep running and re-attach on next start (deck stop --all ends them)"

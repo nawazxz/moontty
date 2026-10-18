@@ -1,5 +1,5 @@
 // Moontty.app: a native window around the agent-deck server.
-// The server runs detached, so quitting the app is a "detach": agents keep working.
+// Quitting the app stops the server and every agent; "Quit, keep agents running" (⌥⌘Q) only detaches.
 import Cocoa
 import WebKit
 
@@ -40,9 +40,10 @@ final class DropWebView: WKWebView {
   }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
   var window: NSWindow!
   var web: WKWebView!
+  var keepAgents = false
 
   func applicationDidFinishLaunching(_ note: Notification) {
     buildMenu()
@@ -68,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     window.contentView = web
     window.center()
     window.setFrameAutosaveName("MoonttyMain")
+    window.delegate = self
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
 
@@ -78,7 +80,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
   }
 
-  func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
+  // Closing the window quits, through the same check, so a cancelled quit keeps the window open.
+  func windowShouldClose(_ sender: NSWindow) -> Bool { NSApp.terminate(nil); return false }
+
+  // Quit = stop everything. Agents still busy or waiting on you get a confirm first.
+  func applicationShouldTerminate(_ app: NSApplication) -> NSApplication.TerminateReply {
+    if keepAgents { return .terminateNow }
+    web.evaluateJavaScript("[...panes.values()].filter((p) => p.info.status === 'working' || p.info.status === 'waiting').length") { r, _ in
+      let busy = (r as? Int) ?? 0
+      if busy > 0 {
+        let a = NSAlert()
+        a.messageText = busy == 1 ? "1 agent is still working" : "\(busy) agents are still working"
+        a.informativeText = "Quitting stops every agent and shell. Conversations stay saved in Claude Code."
+        a.addButton(withTitle: "Quit and stop all")
+        a.addButton(withTitle: "Cancel")
+        if a.runModal() != .alertFirstButtonReturn { return app.reply(toApplicationShouldTerminate: false) }
+      }
+      self.stopEverything()
+      app.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
+  }
+
+  @objc func quitKeepingAgents() { keepAgents = true; NSApp.terminate(nil) }
+
+  func stopEverything() {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+    p.arguments = ["\(deckDir)/deck", "stop", "--all"]
+    try? p.run()
+    p.waitUntilExit()
+  }
 
   // MARK: server
 
@@ -119,12 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     a.addButton(withTitle: "Stop all")
     a.addButton(withTitle: "Cancel")
     guard a.runModal() == .alertFirstButtonReturn else { return }
-    let p = Process()
     // Agents live in dtach and outlive the server, so ending the shift goes through `deck stop --all`.
-    p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    p.arguments = ["\(deckDir)/deck", "stop", "--all"]
-    try? p.run()
-    p.waitUntilExit()
+    stopEverything()
     web.loadHTMLString(splash("Shift ended. Standing up a fresh one…"), baseURL: nil)
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
       self.ensureServer { ok in if ok { self.web.load(URLRequest(url: deckURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)) } }
@@ -189,7 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       item("Hide Moontty", #selector(NSApplication.hide(_:)), "h"),
       item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
       .separator(),
-      item("Quit (agents keep running)", #selector(NSApplication.terminate(_:)), "q"),
+      item("Quit Moontty", #selector(NSApplication.terminate(_:)), "q"),
+      item("Quit, keep agents running", #selector(quitKeepingAgents), "q", [.command, .option]),
     ])
     add("Edit", [
       item("Undo", Selector(("undo:")), "z"),

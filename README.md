@@ -95,10 +95,12 @@ Press `⌥N` (or **+ deploy**) to start a mission: give it a codename, a folder 
 | pinch, `ctrl`-scroll | zoom the canvas |
 | drag empty canvas, two-finger scroll | pan |
 
+In Moontty.app, quitting (⌘Q or closing the window) stops everything, with a confirm if agents are still working. **Quit, keep agents running** (⌥⌘Q) only closes the window; they reattach next time.
+
 ```sh
 moontty            # start (or reattach) and open the window
 moontty stop       # stop the server; agents keep running and come back next start
-moontty stop --all # stop the server and end every agent
+moontty stop --all # stop the server, end every agent and start the next run clean
 moontty log        # follow the server log
 moontty setup      # re-run the checks and hook install
 ```
