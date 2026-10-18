@@ -23,5 +23,13 @@
   "bin": {
     "moontty": "deck",
     "mt-preview": "bin/mt-preview"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nawazxz/moontty.git"
+  },
+  "homepage": "https://github.com/nawazxz/moontty",
+  "os": [
+    "darwin"
+  ]
 }

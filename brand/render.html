@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- Brand assets, rendered to PNG by brand/render.sh. ?a=logo | logo-light | social | mascot -->
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&family=Chakra+Petch:wght@500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#1e1e1e; --win:#232323; --chrome:#2a2a2a; --line:#363636; --text:#d6d6d6; --dim:#9a9a9a; --mute:#666; --amber:#e3a23a; --red:#e0566a; --green:#9cc463; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: transparent; color: var(--text); font-family: "Chakra Petch", sans-serif; }
+  img.px { image-rendering: pixelated; display: block; }
+  .asset:not(.on) { display: none !important; }
+  /* horizontal lockup */
+  .logo { display: inline-flex; align-items: center; gap: 26px; padding: 30px 40px; }
+  .logo .word { font: 900 112px/1 "Big Shoulders Display"; letter-spacing: .08em; color: var(--text); }
+  .logo .word b { color: var(--amber); font-weight: 900; }
+  .logo-light { } .logo-light .word { color: #1e1e1e; } .logo-light .word b { color: #b97a17; }
+  /* social preview 1280x640 */
+  .social { width: 1280px; height: 640px; position: relative; overflow: hidden; background: var(--bg);
+    background-image: radial-gradient(circle, #313131 1.4px, transparent 1.8px); background-size: 32px 32px; }
+  .social .glow { position: absolute; left: 860px; top: 320px; width: 900px; height: 900px; transform: translate(-50%,-50%); background: radial-gradient(closest-side, rgba(227,162,58,.18), transparent); }
+  .social .copy { position: absolute; left: 88px; top: 120px; width: 700px; }
+  .social h1 { font: 900 132px/0.92 "Big Shoulders Display"; letter-spacing: .06em; }
+  .social h1 b { color: var(--amber); }
+  .social p { margin-top: 26px; font: 500 30px/1.35 "Chakra Petch"; color: var(--dim); }
+  .social p em { font-style: normal; color: var(--text); }
+  .social .tag { position: absolute; left: 88px; bottom: 70px; display: flex; gap: 22px; font: 500 18px "JetBrains Mono"; color: var(--mute); letter-spacing: .06em; text-transform: uppercase; }
+  .social .tag span::before { content: "■ "; color: var(--amber); }
+  .social .nox { position: absolute; left: 800px; top: 120px; width: 400px; height: 400px; }
+  .social .wire { position: absolute; left: 0; top: 0; }
+  .mascot { padding: 40px; } .mascot img { width: 640px; height: 640px; }
+</style></head><body>
+<div class="asset logo" id="logo"><img class="px" src="nox.svg" width="128" height="128"><div class="word">MOON<b>TTY</b></div></div>
+<div class="asset logo logo-light" id="logo-light"><img class="px" src="nox.svg" width="128" height="128"><div class="word">MOON<b>TTY</b></div></div>
+<div class="asset social" id="social">
+  <div class="glow"></div>
+  <img class="px nox" src="nox.svg">
+  <div class="copy">
+    <h1>MOON<b>TTY</b></h1>
+    <p>Every Claude Code session and every subagent it sends out, <em>live on one canvas.</em></p>
+  </div>
+  <div class="tag"><span>exact status</span><span>branch per mission</span><span>survives restarts</span><span>MIT</span></div>
+</div>
+<div class="asset mascot" id="mascot"><img class="px" src="nox.svg"></div>
+<script>
+  const a = new URLSearchParams(location.search).get('a') || 'logo';
+  document.getElementById(a).classList.add('on');
+</script>
+</body></html>

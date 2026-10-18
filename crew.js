@@ -176,7 +176,8 @@ class CrewWatcher {
   // still the live one, otherwise the newest file touched since the pane started
   // (covers /clear, --continue and --resume) that no other pane has claimed.
   resolve(claimed) {
-    if (!/^claude(\s|$)/.test((this.s.cmd || '').trim())) return null;
+    // claude launched by the pane, or started by hand in it (hooks then report its session id)
+    if (!/^claude(\s|$)/.test((this.s.cmd || '').trim()) && !this.s.claudeSid) return null;
     const dir = projectDir(require('./paths').expand(this.s.cwd));
     let files;
     try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl')); } catch { return null; }

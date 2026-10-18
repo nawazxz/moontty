@@ -15,6 +15,7 @@ case "$1" in
     fi
     exit ;;
   log)  tail -f ~/.agent-deck/server.log; exit ;;
+  setup) node "$DIR/setup.js"; exit ;;
 esac
 if ! curl -s -o /dev/null "$URL"; then
   nohup node "$DIR/server.js" >> ~/.agent-deck/server.log 2>&1 &

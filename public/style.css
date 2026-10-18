@@ -262,3 +262,8 @@ dialog label.chk input:checked::after { content: ""; width: 6px; height: 6px; ba
 .prevp iframe { flex: 1; width: 100%; border: 0; background: #fff; }
 .prevp .shield { display: none; position: absolute; inset: 30px 0 0; }
 body.dragging .prevp .shield { display: block; }
+
+/* Nox, the mascot: pixel art, so never smooth it */
+.nox { image-rendering: pixelated; width: 18px; height: 18px; }
+.brand .nox { margin-right: 2px; }
+#empty .nox.big { width: 96px; height: 96px; }
