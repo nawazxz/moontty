@@ -23,7 +23,8 @@ const SHELL = process.env.SHELL || '/bin/zsh';
 // killing the agents. Socket paths must stay short (macOS caps them near 104 bytes).
 const SOCK_DIR = process.env.DECK_SOCK || path.join(STATE_DIR, 'sock');
 const BUF_DIR = path.join(STATE_DIR, 'buf');
-const DTACH = ['/opt/homebrew/bin/dtach', '/usr/local/bin/dtach', '/usr/bin/dtach'].find((f) => fs.existsSync(f));
+// The packaged app carries its own dtach in bin/, used when the system has none.
+const DTACH = ['/opt/homebrew/bin/dtach', '/usr/local/bin/dtach', '/usr/bin/dtach', path.join(__dirname, 'bin', 'dtach')].find((f) => fs.existsSync(f));
 
 fs.mkdirSync(STATE_DIR, { recursive: true });
 fs.mkdirSync(SOCK_DIR, { recursive: true });

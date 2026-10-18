@@ -3,8 +3,11 @@
 import Cocoa
 import WebKit
 
-let deckDir = Bundle.main.object(forInfoDictionaryKey: "DeckDir") as? String ?? NSHomeDirectory() + "/agent-deck"
-let nodePath = Bundle.main.object(forInfoDictionaryKey: "NodePath") as? String ?? "/usr/local/bin/node"
+// The packaged app (mac/package.sh) carries the server and node in Resources; a dev build points at the repo.
+let resources = Bundle.main.resourcePath ?? ""
+let bundled = FileManager.default.fileExists(atPath: resources + "/app/server.js")
+let deckDir = bundled ? resources + "/app" : Bundle.main.object(forInfoDictionaryKey: "DeckDir") as? String ?? NSHomeDirectory() + "/agent-deck"
+let nodePath = bundled ? resources + "/node" : Bundle.main.object(forInfoDictionaryKey: "NodePath") as? String ?? "/usr/local/bin/node"
 let port = 7681
 let deckURL = URL(string: "http://localhost:\(port)")!
 
@@ -93,7 +96,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
       // Detach with nohup so the server (and every agent) outlives the app.
       let p = Process()
       p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-      p.arguments = ["-c", "mkdir -p ~/.agent-deck; nohup '\(nodePath)' '\(deckDir)/server.js' >> ~/.agent-deck/server.log 2>&1 &"]
+      // A login shell, so the server sees the user's PATH (gh, brew tools) like a terminal would.
+      // The packaged app also (re)installs the Claude Code hook on every start; it is idempotent.
+      let setup = bundled ? "DECK_HOOK=~/.agent-deck/hook.sh '\(nodePath)' '\(deckDir)/setup.js' >> ~/.agent-deck/setup.log 2>&1; " : ""
+      p.arguments = ["-lc", "mkdir -p ~/.agent-deck; \(setup)nohup '\(nodePath)' '\(deckDir)/server.js' >> ~/.agent-deck/server.log 2>&1 &"]
       try? p.run()
       self.waitForServer(tries: 40, done)
     }

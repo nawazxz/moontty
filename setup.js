@@ -5,7 +5,13 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const HOOK = path.join(__dirname, 'hook.sh');
+// The packaged app installs a copy of the hook under ~/.agent-deck (DECK_HOOK), so the hook
+// path in settings.json never points inside an app bundle that can move.
+const SRC_HOOK = path.join(__dirname, 'hook.sh');
+const HOOK = process.env.DECK_HOOK || SRC_HOOK;
+if (HOOK !== SRC_HOOK) { fs.mkdirSync(path.dirname(HOOK), { recursive: true }); fs.copyFileSync(SRC_HOOK, HOOK); }
+// Any Moontty hook already in settings counts, so a repo install and the app never both fire.
+const isOurs = (c) => c === HOOK || /(agent-deck|moontty)\/hook\.sh$/i.test(String(c || ''));
 const SETTINGS = path.join(os.homedir(), '.claude', 'settings.json');
 const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied', 'Notification', 'Stop', 'StopFailure', 'SessionEnd'];
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']);
@@ -19,7 +25,7 @@ console.log('Moontty setup\n');
 
 // 1. tools
 has('claude') ? ok('claude (Claude Code) found') : warn('claude not found. Moontty runs any shell command, but the crew view, exact status and cost need Claude Code.');
-const dtach = ['/opt/homebrew/bin/dtach', '/usr/local/bin/dtach', '/usr/bin/dtach'].find((f) => fs.existsSync(f));
+const dtach = ['/opt/homebrew/bin/dtach', '/usr/local/bin/dtach', '/usr/bin/dtach', path.join(__dirname, 'bin', 'dtach')].find((f) => fs.existsSync(f));
 dtach ? ok(`dtach found (${dtach}): agents survive server restarts`) : warn('dtach not found. Without it, stopping the server ends every agent. Install: brew install dtach');
 has('gh') ? ok('gh found: pull request status on missions') : warn('gh not found. PR chips and "open pr" are off. Install: brew install gh && gh auth login');
 has('git') ? ok('git found') : fail('git not found');
@@ -45,7 +51,7 @@ const hooks = (settings.hooks ||= {});
 const added = [];
 for (const ev of EVENTS) {
   const list = (hooks[ev] ||= []);
-  if (list.some((g) => (g.hooks || []).some((h) => h.command === HOOK))) continue;
+  if (list.some((g) => (g.hooks || []).some((h) => isOurs(h.command)))) continue;
   const group = { hooks: [{ type: 'command', command: HOOK, timeout: 3 }] };
   if (TOOL_EVENTS.has(ev)) group.matcher = '*';
   list.push(group);

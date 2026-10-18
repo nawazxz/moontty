@@ -4,6 +4,8 @@ DIR="${0:A:h}"
 PORT="${DECK_PORT:-7681}"
 URL="http://localhost:$PORT"
 mkdir -p ~/.agent-deck
+# inside the packaged app, node sits next to the code
+NODE="${DIR:h}/node"; [ -x "$NODE" ] || NODE=node
 case "$1" in
   stop)
     # find the server by the port it listens on, however it was started
@@ -17,10 +19,10 @@ case "$1" in
     fi
     exit ;;
   log)  tail -f ~/.agent-deck/server.log; exit ;;
-  setup) node "$DIR/setup.js"; exit ;;
+  setup) "$NODE" "$DIR/setup.js"; exit ;;
 esac
 if ! curl -s -o /dev/null "$URL"; then
-  nohup node "$DIR/server.js" >> ~/.agent-deck/server.log 2>&1 &
+  nohup "$NODE" "$DIR/server.js" >> ~/.agent-deck/server.log 2>&1 &
   for i in {1..30}; do curl -s -o /dev/null "$URL" && break; sleep 0.2; done
 fi
 if [ -d "/Applications/Moontty.app" ]; then open -a "Moontty"; else open -na "Google Chrome" --args --app="$URL" --window-size=1500,950; fi
