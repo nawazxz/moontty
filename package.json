@@ -1,0 +1,21 @@
+{
+  "name": "agent-deck",
+  "version": "1.0.0",
+  "description": "tmux-style GUI for watching all your agents",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper || true"
+  },
+  "keywords": [],
+  "author": "nawazxz",
+  "license": "MIT",
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/headless": "^6.0.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.22.0"
+  }
+}

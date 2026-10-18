@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIGHTSHIFT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/style.css?v=6">
+<link rel="icon" href="/favicon.svg">
+</head>
+<body>
+<!-- The whole app is one canvas: missions are floating terminals, crew are nodes wired to them. -->
+<div id="canvas"><div id="world"><svg id="wires"></svg></div></div>
+
+<div id="hud">
+  <div class="brand"><svg class="moon" viewBox="0 0 24 24"><path d="M15.5 3.2A9 9 0 1 0 20.8 17 7.2 7.2 0 0 1 15.5 3.2Z"/></svg>NIGHTSHIFT</div>
+  <div id="stats"></div>
+  <button id="newBtn" class="txt">+ deploy<kbd>⌥N</kbd></button>
+</div>
+<div id="hudR">
+  <button id="wallBtn" class="txt" title="Fit every mission on screen">overview<kbd>⌥0</kbd></button>
+  <span id="zoom"></span>
+  <span id="conn"></span>
+  <span id="clock"></span>
+</div>
+<div id="beacons"></div>
+
+<div id="empty" hidden>
+  <svg class="moon" viewBox="0 0 24 24"><path d="M15.5 3.2A9 9 0 1 0 20.8 17 7.2 7.2 0 0 1 15.5 3.2Z"/></svg>
+  <h1>ALL QUIET</h1>
+  <p>Deploy a mission and ZERO appears here. Every agent it sends out shows up beside it, wired back to the mission.</p>
+  <button class="txt" onclick="openNew()">+ deploy mission<kbd>⌥N</kbd></button>
+</div>
+
+<dialog id="newDlg">
+  <form method="dialog" id="newForm">
+    <h2>New mission</h2>
+    <label><span>Codename</span><input name="name" autocomplete="off" spellcheck="false"></label>
+    <label><span>Folder</span><input name="cwd" autocomplete="off" spellcheck="false" list="recentDirs"></label>
+    <datalist id="recentDirs"></datalist>
+    <label><span>Command</span><input name="cmd" value="claude" autocomplete="off" spellcheck="false"></label>
+    <div class="presets">
+      <button type="button" data-cmd="claude">claude</button>
+      <button type="button" data-cmd="claude --continue">continue last</button>
+      <button type="button" data-cmd="claude --dangerously-skip-permissions">no prompts</button>
+      <button type="button" data-cmd="">plain shell</button>
+    </div>
+    <div class="row">
+      <button value="cancel" class="txt" formnovalidate>cancel</button>
+      <button value="ok" class="go">DEPLOY</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toasts"></div>
+
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/addon-webgl.js"></script>
+<script src="/app.js?v=6"></script>
+</body>
+</html>
