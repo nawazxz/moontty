@@ -8,7 +8,7 @@ case "$1" in
   stop)
     # find the server by the port it listens on, however it was started
     PIDS=$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null)
-    if [ -n "$PIDS" ]; then kill $PIDS; else echo "moontty was not running on :$PORT"; fi
+    if [ -n "$PIDS" ]; then kill $PIDS; elif [ "$2" != "--all" ]; then echo "moontty was not running on :$PORT"; exit; fi
     if [ "$2" = "--all" ]; then
       pkill -f "dtach -A ${DECK_STATE:-$HOME/.agent-deck}/sock/"; rm -f "${DECK_STATE:-$HOME/.agent-deck}"/sock/*.sock
       echo "moontty stopped, every agent ended"
