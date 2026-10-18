@@ -152,7 +152,7 @@ function publicAgent(a, file, call, unit) {
   return {
     spent,
     id: a.id, name: a.name || a.id, type: a.type, status, call, unit, parent: a.parent || null, depth: a.depth || 1,
-    ctx: a.ctx, model: a.model, ticks: a.ticks,
+    ctx: a.ctx, model: a.model,
     startedAt: a.startedAt, lastAt: a.lastAt, tools: a.tools, errors: a.errors,
     now: last ? (last.k === 'tool' ? `${last.name} · ${last.d}` : last.d) : 'starting…',
     prompt: a.prompt, report: a.report, steps: a.steps.map(({ toolId, ...s }) => s),

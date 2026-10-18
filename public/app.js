@@ -31,7 +31,7 @@ const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString([], { hour: '2-digit'
 // ---------- socket ----------
 function connect() {
   ws = new WebSocket(`ws://${location.host}`);
-  ws.onopen = () => setConn(true);
+  ws.onopen = () => { setConn(true); watchKey = null; };
   ws.onclose = () => { setConn(false); setTimeout(connect, 1500); };
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
@@ -47,7 +47,7 @@ function connect() {
     else if (m.t === 'created') { setTimeout(() => focusMission(m.id), 80); if (m.note) setTimeout(() => panes.get(m.id) && toast(panes.get(m.id), m.note, 'idle'), 400); }
     else if (m.t === 'git') onGit(m);
     else if (m.t === 'history') onHistory(m);
-    else if (m.t === 'pr') { const p = panes.get(m.id); if (p) { p.info.pr = m.pr; scheduleRender(); } }
+    else if (m.t === 'pr') { const p = panes.get(m.id); if (p) { p.info.pr = m.pr; scheduleRender(m.id); } }
     else if (m.t === 'preview') onPreview(m);
     else if (m.t === 'diff') onDiff(m);
     else if (m.t === 'merged') { const p = panes.get(m.id); if (p) toast(p, m.msg, m.ok ? 'done' : 'waiting'); send({ t: 'diff', id: m.id }); }
@@ -91,8 +91,31 @@ function applyCam() {
   document.body.classList.toggle('far', cam.z < 0.55);
   $('#zoom').textContent = `${Math.round(cam.z * 100)}%`;
   renderBeacons();
+  syncWatch();
   save();
 }
+
+// Only terminals you can read get output: on screen and zoomed in far enough to show text.
+// The server holds the rest back and replays its buffer when one comes into view.
+let watchKey = null;
+function syncWatch() {
+  if (!cam || ws?.readyState !== 1) return;
+  const vw = innerWidth, vh = innerHeight;
+  const ids = [];
+  if (!document.hidden && cam.z >= 0.55) {
+    for (const [id] of panes) {
+      const r = W[id];
+      if (!r) continue;
+      const x0 = r.x * cam.z + cam.x, y0 = r.y * cam.z + cam.y;
+      if (x0 + r.w * cam.z > 0 && x0 < vw && y0 + r.h * cam.z > 0 && y0 < vh) ids.push(id);
+    }
+  }
+  const key = ids.join(',');
+  if (key === watchKey) return;
+  watchKey = key;
+  send({ t: 'watch', ids });
+}
+document.addEventListener('visibilitychange', syncWatch);
 const toWorld = (sx, sy) => ({ x: (sx - cam.x) / cam.z, y: (sy - cam.y) / cam.z });
 
 let flight = 0;
@@ -321,6 +344,7 @@ function place(p) {
   for (const q of panes.values()) if (q.info.parent === p.info.id) drawWires();
   placeCrew(p.info.id);
   renderBeacons();
+  syncWatch();
 }
 
 // Draw on the GPU like a native terminal; fall back to the DOM renderer if WebGL dies.
@@ -349,9 +373,13 @@ function select(id, focusTerm = true) {
 }
 
 // ---------- rendering ----------
-function render() {
+// Writes only when the markup changed, so a quiet pane costs no DOM work.
+function setHTML(el, html) { if (el._h !== html) { el._h = html; el.innerHTML = html; } }
+
+function render(only) {
   $('#empty').hidden = panes.size > 0;
   for (const [id, p] of panes) {
+    if (only && !only.has(id)) continue;
     const st = p.info.status || 'idle';
     const main = p.crew?.main;
     const crew = p.crew?.crew || [];
@@ -369,14 +397,14 @@ function render() {
     p.el.querySelector('.meta').title = main ? spendTitle(p) : '';
     const g = p.info.git;
     const wt = p.info.worktree;
-    p.el.querySelector('.gitb').innerHTML = g
+    setHTML(p.el.querySelector('.gitb'), g
       ? `<span class="br${wt ? ' own' : ''}">${esc(g.branch || 'detached')}</span>${g.dirty ? `<span class="dt">${g.dirty} changed</span>` : ''}${g.ahead ? `<span class="ah">${g.ahead} ahead</span>` : ''}${prChip(p.info.pr)}`
-      : '';
+      : '');
     p.el.querySelector('[data-a=pr]').hidden = !(wt && g?.ahead && !p.info.pr);
     p.el.querySelector('[data-a=shell]').hidden = !!p.info.parent;
     p.el.querySelector('[data-a=preview]').hidden = !!p.info.parent;
     p.el.querySelector('[data-a=preview]').classList.toggle('on', !!p.prevEl);
-    p.el.querySelector('.ports').innerHTML = (p.info.ports || []).map((n) => `<button data-port="${n}" title="Open localhost:${n}">:${n}</button>`).join('');
+    setHTML(p.el.querySelector('.ports'), (p.info.ports || []).map((n) => `<button data-port="${n}" title="Open localhost:${n}">:${n}</button>`).join(''));
     p.el.querySelector('[data-a=merge]').hidden = !wt;
     p.el.querySelector('[data-a=diff]').hidden = !g;
     p.el.querySelector('[data-a=diff]').classList.toggle('on', !!p.diffEl);
@@ -397,10 +425,10 @@ function renderStats() {
     if (p.info.status === 'waiting') waiting++;
     crewRun += (p.crew?.crew || []).filter((a) => a.status === 'running').length;
   }
-  $('#stats').innerHTML = panes.size ? `
+  setHTML($('#stats'), panes.size ? `
     ${waiting ? `<span class="w"><b>${waiting}</b> need you</span>` : ''}
     <span><b>${working}</b>/${panes.size} on shift</span>
-    <span><b>${crewRun}</b> crew out</span>` : '';
+    <span><b>${crewRun}</b> crew out</span>` : '');
   document.title = waiting ? `(${waiting}) MOONTTY` : 'MOONTTY';
   native({ kind: 'badge', count: waiting });
 }
@@ -422,7 +450,7 @@ function renderBeacons() {
     const st = p.info.status || 'idle';
     out += `<button class="beacon ${st}" data-id="${id}" style="left:${bx}px;top:${by}px"><span class="led ${st}"></span>${esc(p.info.name)}<span class="arr">${arr}</span></button>`;
   }
-  $('#beacons').innerHTML = out;
+  setHTML($('#beacons'), out);
 }
 $('#beacons').onclick = (e) => { const b = e.target.closest('.beacon'); if (b) focusMission(Number(b.dataset.id)); };
 
@@ -545,6 +573,10 @@ function makeNode(key, pid) {
 
 function fill(n, a) {
   n._a = a;
+  const open = n.classList.contains('open');
+  const key = `${a.call}|${a.status}|${a.steps.length}|${a.lastAt}|${a.report.length}|${a.parentCall}|${a.name}|${open}`;
+  if (n._key === key) return;
+  n._key = key;
   const hd = n.querySelector('.hd');
   if (n.dataset.call !== a.call) {
     n.dataset.call = a.call;
@@ -559,7 +591,6 @@ function fill(n, a) {
   const tk = n.querySelector('.tk');
   tk.textContent = a.name;
   tk.title = a.prompt || a.name;
-  const open = n.classList.contains('open');
   const log = n.querySelector('.log');
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
   const steps = open ? a.steps : a.steps.slice(-6);
@@ -629,7 +660,7 @@ function drawWires() {
     const x = r.x + 40, y1 = r.y + r.h, y2 = y1 + DIFF_GAP;
     out += `<path class="wire" d="M${x},${y1} L${x},${y2}"/><circle class="port src" cx="${x}" cy="${y1}" r="3"/><circle class="port" cx="${x}" cy="${y2}" r="3"/>`;
   }
-  $('#wires').innerHTML = out;
+  setHTML($('#wires'), out);
 }
 
 // ---------- live events ----------
@@ -638,7 +669,7 @@ function onStatus(m) {
   if (!p) return;
   p.info.status = m.status;
   p.waitMsg = m.msg || '';
-  scheduleRender();
+  scheduleRender(m.id);
   if (m.status === 'waiting') toast(p, m.msg || 'needs your input', 'waiting');
   else if (m.status === 'idle' && m.prev === 'working' && m.workedMs > 8000) { toast(p, 'is done', 'idle'); chime(); }
 }
@@ -653,7 +684,7 @@ function onCrew(m) {
     if (prev && prev.status === 'running' && a.status === 'done') toast(p, `${a.call} returned · ${a.name}`, 'done', a.call);
     seen.set(key, { status: a.status, steps: a.steps.length });
   }
-  scheduleRender();
+  scheduleRender(m.id);
 }
 
 // ---------- spend: tokens and an API-rate cost estimate for the lead + its crew ----------
@@ -730,7 +761,7 @@ function onGit(m) {
   p.info.git = m.git;
   p.info.ports = m.ports;
   if (p.diffEl) send({ t: 'diff', id: m.id }); // keep an open panel live
-  scheduleRender();
+  scheduleRender(m.id);
 }
 
 const DIFF_GAP = 34;
@@ -833,11 +864,19 @@ window.addEventListener('keydown', (e) => {
   if (e.metaKey && !e.altKey && !e.ctrlKey && e.code === 'KeyF' && !dlg.open) { e.preventDefault(); e.stopPropagation(); openFind(); }
 }, true);
 
-let renderQueued = false;
-function scheduleRender() {
+// Pass a pane id to redraw just that pane; no id redraws all of them.
+let renderQueued = false, renderAll = false;
+const renderIds = new Set();
+function scheduleRender(id) {
+  if (id == null) renderAll = true;
+  else renderIds.add(id);
   if (renderQueued) return;
   renderQueued = true;
-  requestAnimationFrame(() => { renderQueued = false; render(); });
+  requestAnimationFrame(() => {
+    const only = renderAll ? null : new Set(renderIds);
+    renderQueued = false; renderAll = false; renderIds.clear();
+    render(only);
+  });
 }
 
 function toast(p, what, cls, who) {
@@ -924,7 +963,7 @@ window.addEventListener('keydown', (e) => {
   else handled = false;
   if (handled) { e.preventDefault(); e.stopPropagation(); }
 }, true);
-window.addEventListener('resize', renderBeacons);
+window.addEventListener('resize', () => { renderBeacons(); syncWatch(); });
 
 // Wait for the mono font so xterm measures cells correctly (don't hang if offline).
 Promise.race([document.fonts.load('12.5px "JetBrains Mono"'), new Promise((r) => setTimeout(r, 1500))]).then(connect);

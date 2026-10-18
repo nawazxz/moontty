@@ -65,6 +65,7 @@ function computeStatus(s) {
     return s.hook;
   }
   if (Date.now() - s.lastOutput < 1500) return 'working';
+  if (s.screenStale) { s.screenStale = false; s.screen.reset(); s.screen.write(s.buffer.slice(-64 * 1024)); }
   if (WAITING.some((re) => re.test(screenText(s)))) return 'waiting';
   return 'idle';
 }
@@ -136,11 +137,14 @@ function spawn(s, fresh) {
   p.onData((d) => {
     if (s.pty !== p) return;
     s.buffer += d;
-    if (s.buffer.length > SCROLLBACK) s.buffer = s.buffer.slice(-SCROLLBACK);
+    // Trim with some slack: slicing a full buffer on every chunk copies 400 KB each time.
+    if (s.buffer.length > SCROLLBACK * 1.25) s.buffer = s.buffer.slice(-SCROLLBACK);
     s.bufDirty = true;
     s.lastOutput = Date.now();
-    s.screen.write(d);
-    broadcast({ t: 'out', id: s.id, data: d });
+    // The on-screen heuristic only runs for panes that never sent a hook, so hooked panes skip the parse.
+    if (!s.hook) s.screen.write(d);
+    else s.screenStale = true;
+    broadcastOut(s.id, d);
   });
   p.onExit(({ exitCode }) => {
     if (s.pty !== p) return;
@@ -229,6 +233,12 @@ function publicInfo(s) {
 function broadcast(msg) {
   const str = JSON.stringify(msg);
   for (const c of clients) if (c.readyState === 1) c.send(str);
+}
+
+// Output only goes to windows that are showing that pane; the rest catch up from the buffer on return.
+function broadcastOut(id, data) {
+  const str = JSON.stringify({ t: 'out', id, data });
+  for (const c of clients) if (c.readyState === 1 && (!c.watch || c.watch.has(id))) c.send(str);
 }
 
 function pushList() {
@@ -480,6 +490,12 @@ wss.on('connection', (ws, req) => {
         let dir = expand(String(m.cwd || '~'));
         try { dir = fs.realpathSync(dir); } catch {}
         ws.send(JSON.stringify({ t: 'history', cwd: m.cwd, list: history.list(dir) }));
+        break;
+      }
+      case 'watch': {
+        const next = new Set((Array.isArray(m.ids) ? m.ids : []).filter((id) => sessions.has(id)));
+        for (const id of next) if (ws.watch && !ws.watch.has(id)) ws.send(JSON.stringify({ t: 'replay', id, data: sessions.get(id).buffer }));
+        ws.watch = next;
         break;
       }
       case 'resize':
