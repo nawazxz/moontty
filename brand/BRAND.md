@@ -4,7 +4,7 @@
 
 ## Name
 
-**Moontty**, said "moon tee tee why". Moon for the night shift your agents work while you sleep, `tty` for the terminal they live in. Written `Moontty` in prose, `MOONTTY` in the wordmark, `moontty` for the command and package.
+**Moontty**, said "moon tee tee why". Moon for the late hours your agents keep working after you look away, `tty` for the terminal they live in. Written `Moontty` in prose, `MOONTTY` in the wordmark, `moontty` for the command and package.
 
 In the wordmark, `MOON` is the text color and `TTY` is amber.
 
@@ -12,7 +12,7 @@ In the wordmark, `MOON` is the text color and `TTY` is amber.
 
 - Tagline: **Keep watch over every agent.**
 - Descriptor: Every Claude Code session and every subagent it sends out, live on one canvas.
-- Sign-off: Your agents work the night shift. Moontty keeps watch.
+- Sign-off: Your agents keep working. Moontty keeps watch.
 
 The full identity (positioning, personality, voice, launch copy) is in `book.html`, built from `book.src.html`.
 
@@ -20,7 +20,7 @@ The full identity (positioning, personality, voice, launch copy) is in `book.htm
 
 <img src="nox.png" alt="Nox, the Moontty mascot" width="200">
 
-Nox is a pixel moon working the night shift.
+Nox is a pixel moon that keeps watch.
 
 - **Night side:** the dark crescent on its left is the moon's shadow. Nox is always caught mid-phase.
 - **Cursor eyes:** its eyes are terminal block cursors. In animation, they blink like a cursor.
@@ -72,7 +72,7 @@ All three are on Google Fonts.
 
 ## Words
 
-The interface speaks night-shift ops. This table maps the terms to plain words for newcomers:
+The interface labels things in short ops terms. This table maps the terms to plain words for newcomers:
 
 | In Moontty | Means |
 |---|---|

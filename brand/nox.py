@@ -1,4 +1,4 @@
-# Nox, the Moontty mascot. A pixel moon working the night shift:
+# Nox, the Moontty mascot. A pixel moon keeping watch:
 # block-cursor eyes (it lives in a terminal), a headset (it's on shift), stubby legs.
 # Writes nox.svg (and nox-blink.svg, eyes shut) from the grid below.
 import os, sys

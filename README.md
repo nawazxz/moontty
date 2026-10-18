@@ -11,7 +11,7 @@
   <img src="docs/hero.png" alt="Moontty: a mission waiting for permission, its docked shell running a dev server, and its Explore subagent wired in on the right">
 </p>
 
-Moontty is a night-shift desk for people who run several Claude Code agents at once. Each agent gets a real terminal floating on a pan-and-zoom canvas. The subagents it spawns hang off it on wires, with their orders, every tool call and their final report. You see who is working, who is done, and who is waiting on you, without clicking through tabs.
+Moontty keeps watch over every Claude Code agent you run at once. Each agent gets a real terminal floating on a pan-and-zoom canvas. The subagents it spawns hang off it on wires, with their orders, every tool call and their final report. You see who is working, who is done, and who is waiting on you, without clicking through tabs.
 
 It runs your own shell in real PTYs. Nothing about Claude Code changes: you type into the same `claude` you already use.
 

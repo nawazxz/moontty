@@ -35,5 +35,5 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 codesign --force --deep -s - "$OUT"
-rm -rf "/Applications/Agent Deck.app" "/Applications/Nightshift.app" "/Applications/Nightcafe.app" "/Applications/Moontty.app"; cp -R "$OUT" /Applications/
+rm -rf "/Applications/Moontty.app"; cp -R "$OUT" /Applications/
 echo "installed: /Applications/Moontty.app ($(du -sh "$OUT" | cut -f1))"

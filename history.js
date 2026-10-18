@@ -19,7 +19,8 @@ function firstPrompt(file) {
     if (Array.isArray(c)) c = c.find((p) => p.type === 'text')?.text;
     if (typeof c !== 'string') continue;
     c = c.replace(/\s+/g, ' ').trim();
-    if (c && !c.startsWith('<')) return c.slice(0, 140);
+    // skip harness markup and slash commands (/clear, /model...) so the list shows what you asked
+    if (c && !c.startsWith('<') && !/^\/\w+(\s|$)/.test(c)) return c.slice(0, 140);
   }
   return '';
 }

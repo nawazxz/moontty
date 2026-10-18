@@ -1,7 +1,7 @@
 {
   "name": "moontty",
   "version": "1.0.0",
-  "description": "A night-shift canvas for Claude Code: every agent, every subagent, one live terminal map",
+  "description": "Keep watch over every Claude Code agent: every agent and subagent, live on one canvas",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

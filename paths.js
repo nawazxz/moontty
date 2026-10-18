@@ -1,3 +1,4 @@
+// paths.js: expands ~ in the folders missions run in.
 const os = require('os');
 const path = require('path');
 
