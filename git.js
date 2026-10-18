@@ -13,7 +13,7 @@ const gitSync = (dir, args) => execFileSync('git', ['-C', dir, ...args], { encod
 
 const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'mission';
 
-// New worktree next to the repo (<repo>-<slug>) on branch nc/<slug>, started from the current HEAD.
+// New worktree next to the repo (<repo>-<slug>) on branch mt/<slug>, started from the current HEAD.
 function addWorktree(dir, name) {
   let root;
   try { root = gitSync(dir, ['rev-parse', '--show-toplevel']); } catch { throw new Error('folder is not a git repo'); }
@@ -23,7 +23,7 @@ function addWorktree(dir, name) {
   let branch, wpath;
   for (let i = 1; ; i++) {
     const tag = i === 1 ? slug : `${slug}-${i}`;
-    branch = `nc/${tag}`;
+    branch = `mt/${tag}`;
     wpath = path.join(path.dirname(root), `${path.basename(root)}-${tag}`);
     let taken = fs.existsSync(wpath);
     try { gitSync(root, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]); taken = true; } catch {}

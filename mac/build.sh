@@ -1,9 +1,9 @@
 #!/bin/zsh
-# Builds "Nightcafe.app" and installs it to /Applications.
+# Builds "Moontty.app" and installs it to /Applications.
 set -e
-HERE="${0:A:h}"; DECK="${HERE:h}"; OUT="$DECK/dist/Nightcafe.app"; NODE="$(command -v node)"
+HERE="${0:A:h}"; DECK="${HERE:h}"; OUT="$DECK/dist/Moontty.app"; NODE="$(command -v node)"
 rm -rf "$OUT"; mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
-swiftc -O -o "$OUT/Contents/MacOS/Nightcafe" "$HERE/main.swift" -framework Cocoa -framework WebKit
+swiftc -O -o "$OUT/Contents/MacOS/Moontty" "$HERE/main.swift" -framework Cocoa -framework WebKit
 
 # icon: HTML -> 1024 PNG (headless Chrome) -> iconset -> icns
 TMP="$(mktemp -d)"; ICONSET="$TMP/AppIcon.iconset"; mkdir -p "$ICONSET"
@@ -19,10 +19,10 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Nightcafe</string>
-  <key>CFBundleDisplayName</key><string>Nightcafe</string>
-  <key>CFBundleIdentifier</key><string>com.nawazxz.nightcafe</string>
-  <key>CFBundleExecutable</key><string>Nightcafe</string>
+  <key>CFBundleName</key><string>Moontty</string>
+  <key>CFBundleDisplayName</key><string>Moontty</string>
+  <key>CFBundleIdentifier</key><string>com.nawazxz.moontty</string>
+  <key>CFBundleExecutable</key><string>Moontty</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>3.0</string>
@@ -35,5 +35,5 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 codesign --force --deep -s - "$OUT"
-rm -rf "/Applications/Agent Deck.app" "/Applications/Nightshift.app" "/Applications/Nightcafe.app"; cp -R "$OUT" /Applications/
-echo "installed: /Applications/Nightcafe.app ($(du -sh "$OUT" | cut -f1))"
+rm -rf "/Applications/Agent Deck.app" "/Applications/Nightshift.app" "/Applications/Nightcafe.app" "/Applications/Moontty.app"; cp -R "$OUT" /Applications/
+echo "installed: /Applications/Moontty.app ($(du -sh "$OUT" | cut -f1))"

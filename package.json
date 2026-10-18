@@ -1,7 +1,7 @@
 {
-  "name": "agent-deck",
+  "name": "moontty",
   "version": "1.0.0",
-  "description": "tmux-style GUI for watching all your agents",
+  "description": "A night-shift canvas for Claude Code: every agent, every subagent, one live terminal map",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -19,5 +19,9 @@
     "@xterm/xterm": "^6.0.0",
     "node-pty": "^1.1.0",
     "ws": "^8.22.0"
+  },
+  "bin": {
+    "moontty": "deck",
+    "mt-preview": "bin/mt-preview"
   }
 }

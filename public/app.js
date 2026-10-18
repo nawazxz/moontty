@@ -6,7 +6,7 @@ let zTop = 10;
 const seen = new Map(); // `${pane}:${agent}` -> { status, steps }
 
 const $ = (s) => document.querySelector(s);
-// Inside Nightcafe.app the page can talk to the native shell (notifications, dock badge).
+// Inside Moontty.app the page can talk to the native shell (notifications, dock badge).
 const native = (msg) => window.webkit?.messageHandlers?.deck?.postMessage(msg);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const LABEL = { working: 'active', waiting: 'needs you', idle: 'standby', exited: 'offline' };
@@ -35,7 +35,11 @@ function connect() {
   ws.onclose = () => { setConn(false); setTimeout(connect, 1500); };
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.t === 'sessions') syncSessions(m.list);
+    if (m.t === 'hello') {
+      // first contact pins the build; a different one after a reconnect means the server was updated
+      if (window.BUILD && window.BUILD !== m.build) return location.reload();
+      window.BUILD = m.build;
+    } else if (m.t === 'sessions') syncSessions(m.list);
     else if (m.t === 'out') panes.get(m.id)?.term.write(m.data);
     else if (m.t === 'replay') { const p = panes.get(m.id); if (p) { p.term.reset(); p.term.write(m.data); } }
     else if (m.t === 'status') onStatus(m);
@@ -50,7 +54,7 @@ function connect() {
   };
 }
 const send = (m) => ws?.readyState === 1 && ws.send(JSON.stringify(m));
-// Nightcafe.app drops: native side hands over shell-escaped paths and the drop point.
+// Moontty.app drops: native side hands over shell-escaped paths and the drop point.
 window.dropPaths = (text, x, y) => {
   const hit = [...panes.entries()].find(([, p]) => p.el.contains(document.elementFromPoint(x, y)));
   const id = hit ? hit[0] : current;
@@ -397,7 +401,7 @@ function renderStats() {
     ${waiting ? `<span class="w"><b>${waiting}</b> need you</span>` : ''}
     <span><b>${working}</b>/${panes.size} on shift</span>
     <span><b>${crewRun}</b> crew out</span>` : '';
-  document.title = waiting ? `(${waiting}) NIGHTCAFE` : 'NIGHTCAFE';
+  document.title = waiting ? `(${waiting}) MOONTTY` : 'MOONTTY';
   native({ kind: 'badge', count: waiting });
 }
 
@@ -625,7 +629,7 @@ function prChip(pr) {
   return `<span class="pr ${pr.state.toLowerCase()} ${pr.checks}" data-url="${esc(pr.url)}" title="Open PR #${pr.number} on GitHub">#${pr.number} ${pr.state.toLowerCase()}${mark ? ` ${mark}` : ''}${rv}</span>`;
 }
 
-// ---------- preview: a browser pane above the mission (agents drive it with nc-preview) ----------
+// ---------- preview: a browser pane above the mission (agents drive it with mt-preview) ----------
 const PREV_H = 560;
 function openPreview(p, url) {
   if (!p.prevEl) {

@@ -402,7 +402,7 @@ const server = http.createServer(async (req, res) => {
     if (s && !s.exited) onHook(s, ev);
     return res.writeHead(204).end();
   }
-  // nc-preview from inside a pane: drive that mission's preview pane.
+  // mt-preview from inside a pane: drive that mission's preview pane.
   if (req.method === 'POST' && url === '/preview') {
     const s = sessions.get(Number(req.headers['x-deck-id']));
     let m = {};
@@ -423,12 +423,17 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
+// Fingerprint of the page code. An open window that reconnects to a newer server reloads itself
+// instead of running stale JavaScript against the new protocol.
+const BUILD = crypto.createHash('sha1').update(['index.html', 'app.js', 'style.css'].map((f) => fs.readFileSync(path.join(__dirname, 'public', f))).join('')).digest('hex').slice(0, 10);
+
 const wss = new WebSocketServer({ server });
 wss.on('connection', (ws, req) => {
   // Local-only tool: refuse cross-site pages trying to drive your shells.
   const origin = req.headers.origin || '';
   if (origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return ws.close();
   clients.add(ws);
+  ws.send(JSON.stringify({ t: 'hello', build: BUILD }));
   ws.send(JSON.stringify({ t: 'sessions', list: [...sessions.values()].map(publicInfo) }));
   for (const s of sessions.values()) {
     ws.send(JSON.stringify({ t: 'replay', id: s.id, data: s.buffer }));

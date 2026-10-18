@@ -1,20 +1,20 @@
 #!/bin/sh
-# nc-preview: lets an agent drive the Nightcafe preview pane beside its mission.
-#   nc-preview <url>            open <url> in the preview pane (e.g. http://localhost:3000)
-#   nc-preview reload           reload the preview pane
-#   nc-preview close            close it
-#   nc-preview shot <url> [png] screenshot <url> with headless Chrome so you can look at it
+# mt-preview: lets an agent drive the Moontty preview pane beside its mission.
+#   mt-preview <url>            open <url> in the preview pane (e.g. http://localhost:3000)
+#   mt-preview reload           reload the preview pane
+#   mt-preview close            close it
+#   mt-preview shot <url> [png] screenshot <url> with headless Chrome so you can look at it
 case "$1" in
   ''|-h|--help) sed -n 2,7p "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   shot)
-    url="$2"; out="${3:-${TMPDIR:-/tmp}/nc-preview-$$.png}"
+    url="$2"; out="${3:-${TMPDIR:-/tmp}/mt-preview-$$.png}"
     chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     [ -x "$chrome" ] || { echo "Google Chrome not found" >&2; exit 1; }
     "$chrome" --headless=new --disable-gpu --hide-scrollbars --window-size=1440,900 --screenshot="$out" "$url" >/dev/null 2>&1
     [ -f "$out" ] && echo "$out" || { echo "screenshot failed" >&2; exit 1; }
     exit 0 ;;
 esac
-[ -n "$AGENT_DECK_ID" ] || { echo "nc-preview: not inside a Nightcafe pane" >&2; exit 1; }
+[ -n "$AGENT_DECK_ID" ] || { echo "mt-preview: not inside a Moontty pane" >&2; exit 1; }
 case "$1" in reload|close) body="{\"action\":\"$1\"}" ;; *) body="{\"url\":\"$1\"}" ;; esac
 curl -s --max-time 2 -o /dev/null -w '%{http_code}' -X POST -H "X-Deck-Id: $AGENT_DECK_ID" -H 'Content-Type: application/json' \
-  --data "$body" "http://127.0.0.1:${AGENT_DECK_PORT:-7681}/preview" | grep -q 204 && echo "preview: $1" || { echo "nc-preview: server did not accept it" >&2; exit 1; }
+  --data "$body" "http://127.0.0.1:${AGENT_DECK_PORT:-7681}/preview" | grep -q 204 && echo "preview: $1" || { echo "mt-preview: server did not accept it" >&2; exit 1; }

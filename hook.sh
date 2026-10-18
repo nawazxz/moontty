@@ -1,6 +1,6 @@
 #!/bin/sh
-# Claude Code hook for every Nightcafe event: forwards the hook's JSON to the
-# server that owns this pane. Outside a Nightcafe pane it does nothing. It must
+# Claude Code hook for every Moontty event: forwards the hook's JSON to the
+# server that owns this pane. Outside a Moontty pane it does nothing. It must
 # stay silent on stdout and never block Claude.
 [ -n "$AGENT_DECK_ID" ] || exit 0
 curl -s --max-time 1 -o /dev/null -X POST \
