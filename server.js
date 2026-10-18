@@ -1,4 +1,4 @@
-// agent-deck: a tiny tmux-like session server with a browser GUI.
+// Moontty server: a tiny tmux-like session server with a browser GUI.
 // PTYs live here, so closing the window is a "detach"; reopening re-attaches.
 const http = require('http');
 const fs = require('fs');
@@ -519,7 +519,7 @@ wss.on('connection', (ws, req) => {
 // Re-attach to every pane that is still running; only dead ones start over.
 for (const def of load()) createSession(def, false);
 save();
-server.listen(PORT, '127.0.0.1', () => console.log(`agent-deck on http://localhost:${PORT}`));
+server.listen(PORT, '127.0.0.1', () => console.log(`moontty on http://localhost:${PORT}`));
 
 // Stopping the server only detaches: the agents keep running in dtach and come back on next start.
 // Without dtach the shells die with us, as before.
