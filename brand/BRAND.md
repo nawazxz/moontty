@@ -8,6 +8,14 @@
 
 In the wordmark, `MOON` is the text color and `TTY` is amber.
 
+## Lines
+
+- Tagline: **Keep watch over every agent.**
+- Descriptor: Every Claude Code session and every subagent it sends out, live on one canvas.
+- Sign-off: Your agents work the night shift. Moontty keeps watch.
+
+The full identity (positioning, personality, voice, launch copy) is in `book.html`, built from `book.src.html`.
+
 ## Mascot: Nox
 
 <img src="nox.png" alt="Nox, the Moontty mascot" width="200">
@@ -84,7 +92,8 @@ Voice for docs and posts: short, direct sentences. Say what it does, then stop. 
 
 | File | What |
 |---|---|
-| `nox.py` | Nox's pixel grid; writes `nox.svg` and `nox-blink.svg` |
+| `nox.py` | Nox's pixel grid; writes `nox.svg`, `nox-blink.svg` and one SVG per mood (`standby`, `working`, `needs-you`, `done`, `offline`) |
+| `book.src.html` / `book.html` | the brand book; `book.html` has the Nox SVGs inlined |
 | `render.html` | layouts for the PNG assets |
 | `render.sh` | renders `logo.png`, `logo-light.png`, `social-preview.png`, `nox.png` with headless Chrome |
 | `social-preview.png` | 1280x640, for the GitHub repo's social preview |
