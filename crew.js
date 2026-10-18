@@ -82,6 +82,8 @@ function prettyTool(name) {
 // Fold transcript records into an agent summary (mutates `a`).
 function ingest(a, records) {
   for (const r of records) {
+    // Claude Code can move a conversation into a new session file and leave this pointer behind.
+    if (r.type === 'continued-in' && r.continuedInSessionId) { a.next = r.continuedInSessionId; continue; }
     if (r.timestamp) {
       const t = Date.parse(r.timestamp);
       if (!a.startedAt) a.startedAt = t;
@@ -197,6 +199,15 @@ class CrewWatcher {
   poll() {
     if (!this.sid) return null;
     ingest(this.main, tail(this.mainState, path.join(this.dir, this.sid + '.jsonl')));
+    // Follow the conversation into its new session file (and keep hooks pointed at it).
+    for (let hops = 0; this.main.next && hops < 8; hops++) {
+      const next = this.main.next;
+      if (!fs.existsSync(path.join(this.dir, next + '.jsonl'))) break;
+      this.sid = next;
+      this.s.claudeSid = next;
+      this.reset();
+      ingest(this.main, tail(this.mainState, path.join(this.dir, this.sid + '.jsonl')));
+    }
     const subDir = path.join(this.dir, this.sid, 'subagents');
     let names = [];
     try { names = fs.readdirSync(subDir).filter((f) => f.endsWith('.jsonl')); } catch {}

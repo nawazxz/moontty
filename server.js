@@ -259,6 +259,7 @@ setInterval(() => {
     try {
       const data = s.crew.poll();
       if (data) { s.crewData = data; broadcast({ t: 'crew', id: s.id, ...data }); }
+      if (s.claudeSid && s.claudeSid !== s.savedSid) { s.savedSid = s.claudeSid; save(); } // follows /resume, /clear, handoffs
     } catch (e) { console.error('crew', s.id, e.message); }
   }
 }, 1500);
@@ -345,7 +346,8 @@ function onHook(s, ev) {
   if (ev.session_id && ev.session_id !== s.claudeSid) {
     // A different session is either the pane's claude starting fresh (or /clear), or a nested
     // `claude -p` run from inside it, which must not hijack the pane.
-    const fresh = name === 'SessionStart' && (s.hook === null || ev.source === 'clear');
+    // (/clear, /resume and compaction also start a new session id inside the same claude)
+    const fresh = name === 'SessionStart' && (s.hook === null || /^(clear|resume|compact)$/.test(ev.source || ''));
     if (s.claudeSid && !fresh) return;
     s.claudeSid = ev.session_id;
   }
