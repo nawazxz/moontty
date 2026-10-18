@@ -1,6 +1,7 @@
 const panes = new Map(); // id -> { info, term, fit, el, crew, lastSize }
 const nodes = new Map(); // `${pane}:${agent}` -> crew node element
 let ws;
+let landed = false;
 let current = null;
 let zTop = 10;
 const seen = new Map(); // `${pane}:${agent}` -> { status, steps }
@@ -39,7 +40,12 @@ function connect() {
       // first contact pins the build; a different one after a reconnect means the server was updated
       if (window.BUILD && window.BUILD !== m.build) return location.reload();
       window.BUILD = m.build;
-    } else if (m.t === 'sessions') syncSessions(m.list);
+    } else if (m.t === 'sessions') {
+      syncSessions(m.list);
+      // Opening Moontty with nothing running lands you in a shell, once per window.
+      if (!landed && !m.list.length) quickShell();
+      landed = true;
+    }
     else if (m.t === 'out') panes.get(m.id)?.term.write(m.data);
     else if (m.t === 'replay') { const p = panes.get(m.id); if (p) { p.term.reset(); p.term.write(m.data); } }
     else if (m.t === 'status') onStatus(m);
@@ -917,7 +923,14 @@ function openNew() {
   form.cwd.select();
 }
 window.openNew = openNew;
-$('#newBtn').onclick = openNew;
+// A new mission lands straight in a shell in your home folder; start claude (or anything) yourself.
+// Shift-click or ⌥⇧N opens the full dialog: folder, command, own branch.
+function quickShell() {
+  const used = new Set([...panes.values()].map((p) => p.info.name));
+  send({ t: 'create', name: CODENAMES.find((v) => !used.has(v)) || `Op ${panes.size + 1}`, cwd: '~', cmd: '' });
+}
+window.quickShell = quickShell;
+$('#newBtn').onclick = (e) => (e.shiftKey ? openNew() : quickShell());
 $('#wallBtn').onclick = overview;
 form.querySelectorAll('.presets button').forEach((b) => (b.onclick = () => (form.cmd.value = b.dataset.cmd)));
 // Past conversations in the chosen folder: click one to resume it.
@@ -955,7 +968,7 @@ window.addEventListener('keydown', (e) => {
   let handled = true;
   if (/^Digit[1-9]$/.test(e.code)) focusMission(ids[Number(e.code.slice(5)) - 1]);
   else if (e.code === 'Digit0' || e.code === 'KeyG') overview();
-  else if (e.code === 'KeyN') openNew();
+  else if (e.code === 'KeyN') e.shiftKey ? openNew() : quickShell();
   else if (e.code === 'BracketRight') focusMission(ids[(i + 1) % ids.length]);
   else if (e.code === 'BracketLeft') focusMission(ids[(i - 1 + ids.length) % ids.length]);
   else if (e.code === 'Equal') zoomTo(innerWidth / 2, innerHeight / 2, cam.z * 1.25);
