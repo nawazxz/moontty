@@ -25,12 +25,20 @@ There are good tools for running agents in parallel. [Conductor](https://www.con
 4. **Your terminal, unwrapped.** No chat UI on top of the agent. It is your login shell, your `claude`, your keybindings, in a GPU-rendered xterm.
 5. **Small and local.** A 600 KB native Mac window around a local Node server. No account, no telemetry, no cloud. MIT licensed.
 
+### Agent teams, laid out as a tree
+
+When the lead agent sends out a team and each teammate sends out its own subagents, Moontty arranges them around the mission: the team split left and right, each member's subagents lined up beside it and wired to it, labeled with who sent them.
+
+<p align="center">
+  <img src="docs/teams.png" alt="A lead agent with three team leads around it on both sides, each with its own subagents wired beside it">
+</p>
+
 ## What you get
 
 | | |
 |---|---|
 | **Exact status** | working, needs you, done, straight from Claude Code hooks, with the pending request on the title bar. Desktop notification, dock badge and a soft chime when a mission finishes. |
-| **Crew view** | subagents as wired nodes: call sign, role, orders, per-tool timeline, report. Click a node to expand its full log. |
+| **Crew view** | subagents as wired nodes around the mission, nested by who sent whom: call sign, role, orders, per-tool timeline, report. Click a node to expand its full log. |
 | **Own branch per mission** | tick "Own branch" and the mission works in its own git worktree on `mt/<codename>`, with your `.env` files copied over. Parallel agents never edit the same files. |
 | **Changes panel** | a diff of everything the mission changed, against the point it branched from, including new files. |
 | **Merge and pull requests** | merge the branch back with one click (refuses with uncommitted work, undoes itself on conflicts), or push and open a PR. The PR number, state, checks and review show on the title bar. |
