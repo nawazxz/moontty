@@ -455,9 +455,10 @@ function insignia(call, size = 36) {
 
 // ---------- crew nodes ----------
 const NODE_W = 290, NODE_H = 136, OPEN_H = 440, GAP = 14, COL = NODE_W + 70;
-// Default spots form a tree to the right of the mission: the team ZERO sent out in the first
-// column, each member's own subagents in the next column lined up beside it, and so on.
-// Heights are real, so an expanded node pushes its subtree down. Dragged nodes keep their spot.
+// Default spots surround the mission: ZERO's team is split between its left and right sides
+// (balanced by how tall each member's subtree is), each side centred on the mission, and every
+// member's own subagents grow outward beside it. Heights are real, so an expanded node pushes
+// its subtree down. Dragged nodes keep their spot.
 const treeCache = new Map(); // pid -> Map(key -> { dx, dy })
 function crewTree(pid) {
   if (treeCache.has(pid)) return treeCache.get(pid);
@@ -476,13 +477,26 @@ function crewTree(pid) {
     const cs = c.reduce((t, b) => t + span(b), 0) + GAP * Math.max(0, c.length - 1);
     return Math.max(h(a), cs);
   };
-  const lay = (a, x, y) => {
+  const lay = (a, x, y, dir) => {
     out.set(`${pid}:${a.id}`, { dx: x, dy: y });
     let cy = y;
-    for (const b of kids.get(a.id) || []) { lay(b, x + COL, cy); cy += span(b) + GAP; }
+    for (const b of kids.get(a.id) || []) { lay(b, x + dir * COL, cy, dir); cy += span(b) + GAP; }
   };
-  let y = 0;
-  for (const a of kids.get('') || []) { lay(a, r.w + 120, y); y += span(a) + GAP; }
+  // split the team, keeping spawn order on each side
+  const sides = { 1: [], '-1': [] }, tall = { 1: 0, '-1': 0 };
+  for (const a of kids.get('') || []) {
+    const d = tall[1] <= tall[-1] ? 1 : -1;
+    sides[d].push(a);
+    tall[d] += span(a) + GAP;
+  }
+  // the left side clears any shells docked there
+  const docked = [...panes.values()].filter((q) => q.info.parent === Number(pid) && W[q.info.id]).map((q) => W[q.info.id].x - r.x);
+  const leftEdge = Math.min(0, ...docked);
+  for (const d of [1, -1]) {
+    let y = r.h / 2 - (tall[d] - GAP) / 2;
+    const x = d === 1 ? r.w + 120 : leftEdge - 120 - NODE_W;
+    for (const a of sides[d]) { lay(a, x, y, d); y += span(a) + GAP; }
+  }
   treeCache.set(pid, out);
   return out;
 }
@@ -581,8 +595,9 @@ function drawWires() {
     if (par) {
       // subagent of a crew member: wire from its parent's header
       const pq = nodePos(`${pid}:${n._a.parent}`);
-      const x1 = pq.x + par.offsetWidth, y1 = pq.y + 16, x2 = q.x, y2 = q.y + 16;
-      const c = Math.max(30, Math.abs(x2 - x1) * 0.5);
+      const out_ = q.x >= pq.x ? 1 : -1; // children grow away from the mission
+      const x1 = out_ === 1 ? pq.x + par.offsetWidth : pq.x, y1 = pq.y + 16, x2 = out_ === 1 ? q.x : q.x + n.offsetWidth, y2 = q.y + 16;
+      const c = Math.max(30, Math.abs(x2 - x1) * 0.5) * out_;
       out += `<path class="wire ${st0}" d="M${x1},${y1} C${x1 + c},${y1} ${x2 - c},${y2} ${x2},${y2}"/><circle class="port src" cx="${x1}" cy="${y1}" r="3"/><circle class="port ${st0}" cx="${x2}" cy="${y2}" r="3"/>`;
       continue;
     }
