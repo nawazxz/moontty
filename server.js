@@ -73,7 +73,7 @@ function computeStatus(s) {
 
 // ---------- persistence ----------
 function save() {
-  const list = [...sessions.values()].map(({ id, name, cwd, cmd, worktree, claudeSid, parent }) => ({ id, name, cwd, cmd, worktree, claudeSid, parent }));
+  const list = [...sessions.values()].map(({ id, name, cwd, cmd, worktree, claudeSid, parent, cols, rows }) => ({ id, name, cwd, cmd, worktree, claudeSid, parent, cols, rows }));
   fs.writeFileSync(STATE_FILE, JSON.stringify(list, null, 2));
 }
 

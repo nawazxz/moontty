@@ -32,7 +32,8 @@ const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString([], { hour: '2-digit'
 // ---------- socket ----------
 function connect() {
   ws = new WebSocket(`ws://${location.host}`);
-  ws.onopen = () => { setConn(true); watchKey = null; };
+  // A restarted server re-attaches shells at their saved size; send ours again so they match what we draw.
+  ws.onopen = () => { setConn(true); watchKey = null; for (const p of panes.values()) p.lastSize = ''; };
   ws.onclose = () => { setConn(false); setTimeout(connect, 1500); };
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
@@ -42,6 +43,7 @@ function connect() {
       window.BUILD = m.build;
     } else if (m.t === 'sessions') {
       syncSessions(m.list);
+      for (const p of panes.values()) if (!p.lastSize) refit(p);
       // Opening Moontty with nothing running lands you in a shell, once per window.
       if (!landed && !m.list.length) quickShell();
       landed = true;
