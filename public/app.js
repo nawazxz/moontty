@@ -49,7 +49,7 @@ function connect() {
       landed = true;
     }
     else if (m.t === 'out') panes.get(m.id)?.term.write(m.data);
-    else if (m.t === 'replay') { const p = panes.get(m.id); if (p) { p.term.reset(); p.term.write(m.data); } }
+    else if (m.t === 'replay') { const p = panes.get(m.id); if (p) { p.replaying = true; p.term.reset(); p.term.write(m.data, () => { p.replaying = false; }); } }
     else if (m.t === 'status') onStatus(m);
     else if (m.t === 'crew') onCrew(m);
     else if (m.t === 'created') { setTimeout(() => focusMission(m.id), 80); if (m.note) setTimeout(() => panes.get(m.id) && toast(panes.get(m.id), m.note, 'idle'), 400); }
@@ -287,7 +287,8 @@ function addPane(info) {
   if (window.WebLinksAddon) term.loadAddon(new WebLinksAddon.WebLinksAddon((e, url) => { if (e.metaKey) send({ t: 'open', url }); }));
   term.open(el.querySelector('.term'));
   loadGpu(term);
-  term.onData((data) => send({ t: 'input', id: info.id, data }));
+  // A replay re-runs old output, and xterm would answer its old queries (focus, device id) into the agent as keystrokes.
+  term.onData((data) => { if (!panes.get(info.id)?.replaying) send({ t: 'input', id: info.id, data }); });
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
     if (e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyK') { term.clear(); return false; }
