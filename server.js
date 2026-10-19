@@ -95,6 +95,8 @@ function paneEnv(s) {
   const env = { ...process.env };
   const INHERITED = /^(TERM_PROGRAM|TERM_PROGRAM_VERSION|TERM_SESSION_ID|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(ENTRYPOINT|EXECPATH|CHILD_SESSION|SESSION_.*|MESSAGING_.*))$/;
   for (const k of Object.keys(env)) if (INHERITED.test(k)) delete env[k];
+  // Apps opened from Finder get no locale, and pbcopy/pbpaste then read UTF-8 as MacRoman (❯ became ‚ùØ¬†). Terminal.app sets one too.
+  if (!env.LANG && !env.LC_ALL && !env.LC_CTYPE) env.LANG = 'en_US.UTF-8';
   return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'agent-deck', SHELL_SESSIONS_DISABLE: '1', PROMPT_EOL_MARK: '', AGENT_DECK_ID: String(s.id), AGENT_DECK_PORT: String(PORT), PATH: `${path.join(__dirname, 'bin')}:${env.PATH || ''}` };
 }
 
