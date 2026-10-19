@@ -14,11 +14,11 @@ case "$ARCH" in
   *) echo "arch must be arm64 or x86_64"; exit 1 ;;
 esac
 # one chip: keep only its slice of a universal binary
-slice() { if [ -n "$ARCH" ]; then lipo "$1" -thin "$ARCH" -output "$2"; else cp "$1" "$2"; fi; }
+slice() { if [ -n "$ARCH" ] && lipo "$1" -info 2>/dev/null | grep -q "^Architectures"; then lipo "$1" -thin "$ARCH" -output "$2"; else cp "$1" "$2"; fi; }
 HERE="${0:A:h}"; DECK="${HERE:h}"; DIST="$DECK/dist"; OUT="$DIST/pkg/Moontty.app"
 : "${NODE_BIN:?set NODE_BIN to a universal node binary}"
 : "${DTACH_BIN:?set DTACH_BIN to a universal dtach binary}"
-VERSION="$(git -C "$DECK" describe --tags --always | sed 's/^v//')"
+VERSION="${VERSION:-$(git -C "$DECK" describe --tags --always | sed 's/^v//')}"
 
 rm -rf "$DIST/pkg"; mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources/app"
 
@@ -53,7 +53,7 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>Moontty</string>
   <key>CFBundleDisplayName</key><string>Moontty</string>
-  <key>CFBundleIdentifier</key><string>com.nawazxz.moontty</string>
+  <key>CFBundleIdentifier</key><string>${BUNDLE_ID:-com.nawazxz.moontty}</string>
   <key>CFBundleExecutable</key><string>Moontty</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
