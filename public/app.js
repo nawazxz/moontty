@@ -183,7 +183,33 @@ function focusMission(id) {
 }
 function overview() { const b = bounds([...panes.keys()]); if (b) flyTo(frame(b, 1)); }
 
-// pan: drag the empty canvas, or two-finger scroll anywhere outside a terminal
+// xterm finds the cell under the mouse from screen pixels but divides by unzoomed cell sizes,
+// so on a zoomed canvas clicks and selections land rows away. Re-aim mouse events over a
+// terminal as if the canvas were at 100%: swallow the real event, send a corrected copy.
+const aimed = new WeakSet();
+let aimTerm = null; // the terminal a press started in, which keeps getting moves while dragging out of it
+for (const type of ['mousedown', 'mousemove', 'mouseup', 'click', 'dblclick', 'contextmenu']) {
+  window.addEventListener(type, (e) => {
+    if (aimed.has(e) || !cam) return;
+    const xt = (type === 'mousedown' ? null : aimTerm) || e.target.closest?.('.win .xterm');
+    if (type === 'mousedown') aimTerm = xt;
+    if (type === 'mouseup') aimTerm = null;
+    if (!xt || cam.z === 1) return;
+    const r = xt.querySelector('.xterm-screen').getBoundingClientRect();
+    const ev = new MouseEvent(type, {
+      bubbles: true, cancelable: true, composed: true, view: window, detail: e.detail,
+      clientX: r.left + (e.clientX - r.left) / cam.z, clientY: r.top + (e.clientY - r.top) / cam.z,
+      screenX: e.screenX, screenY: e.screenY, button: e.button, buttons: e.buttons, relatedTarget: e.relatedTarget,
+      ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey,
+    });
+    aimed.add(ev);
+    e.stopImmediatePropagation();
+    if (type === 'contextmenu') e.preventDefault();
+    e.target.dispatchEvent(ev);
+  }, true);
+}
+
+// pan: drag the empty canvas, two-finger scroll outside a terminal, sideways scroll or ⌘-scroll anywhere
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || (e.target !== canvas && e.target !== world)) return;
   flight++;
@@ -196,16 +222,21 @@ canvas.addEventListener('pointerdown', (e) => {
   addEventListener('pointerup', up);
 });
 canvas.addEventListener('dblclick', (e) => { if (e.target === canvas || e.target === world) overview(); });
+// Capture phase: xterm cancels wheel events it sees, so the canvas has to decide first.
+// Over a terminal, up/down scrolls its history and a sideways swipe pans; ⌘ makes any scroll pan.
 canvas.addEventListener('wheel', (e) => {
   if (!cam) return;
-  if (e.ctrlKey) { e.preventDefault(); zoomTo(e.clientX, e.clientY, cam.z * Math.exp(-e.deltaY * 0.01)); return; }
-  if (e.target.closest('.term, .node.open .log, .diffp .dx, .diffp .files, .prevp')) return;
+  if (e.ctrlKey) { e.preventDefault(); e.stopPropagation(); zoomTo(e.clientX, e.clientY, cam.z * Math.exp(-e.deltaY * 0.01)); return; }
+  const inner = e.target.closest('.term, .node.open .log, .diffp .dx, .diffp .files, .prevp');
+  const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY) && !inner?.matches('.diffp .dx'); // long diff lines scroll sideways
+  if (inner && !e.metaKey && !sideways && !(cam.z < 0.55 && inner.matches('.term'))) return;
   e.preventDefault();
+  e.stopPropagation();
   flight++;
   cam.x -= e.deltaX;
   cam.y -= e.deltaY;
   applyCam();
-}, { passive: false });
+}, { passive: false, capture: true });
 // Safari/WKWebView pinch arrives as gesture events rather than ctrl+wheel.
 let pinchZ = 1;
 canvas.addEventListener('gesturestart', (e) => { e.preventDefault(); pinchZ = cam.z; });
@@ -267,10 +298,10 @@ function addPane(info) {
   const el = document.createElement('div');
   el.className = 'win';
   el.innerHTML = `
-    <div class="bar"><span class="led"></span><b class="nm"></b>
+    <div class="bar"><span class="lights"><button data-a="kill" class="tl r" title="End mission (⌥-click restarts it)"></button><button data-a="min" class="tl y" title="Fold down to the title bar"></button><button data-a="max" class="tl g" title="Fill the screen"></button></span><span class="led"></span><b class="nm"></b>
       <span class="who"><svg class="moon" viewBox="0 0 24 24"><path d="${MOON}"/></svg>ZERO</span>
       <span class="meta"></span><span class="gitb"></span><span class="ports"></span><span class="now"></span>
-      <span class="acts"><button data-a="shell" title="Open a plain shell beside this mission">+ shell</button><button data-a="preview" title="Browser preview beside this mission">preview</button><button data-a="diff">changes</button><button data-a="rename">rename</button><button data-a="pr" hidden>open pr</button><button data-a="merge" hidden>merge</button><button data-a="restart">restart</button><button data-a="kill">end</button></span></div>
+      <span class="acts"><button data-a="shell" title="Open a plain shell beside this mission">+ shell</button><button data-a="preview" title="Browser preview beside this mission">preview</button><button data-a="diff">changes</button><button data-a="rename">rename</button><button data-a="pr" hidden>open pr</button><button data-a="merge" hidden>merge</button><button data-a="restart" hidden>restart</button></span></div>
     <div class="term"></div>
     <div class="big"><span class="led"></span><b></b><span class="bn"></span></div>
     <i class="grip"></i>`;
@@ -316,10 +347,13 @@ function addPane(info) {
   const nm = bar.querySelector('.nm');
   nm.title = 'Double-click to rename';
   nm.addEventListener('dblclick', (e) => { e.stopPropagation(); rename(p); });
-  bar.querySelector('.acts').onclick = (e) => {
-    const a = e.target.closest('button')?.dataset.a;
+  bar.onclick = (e) => {
+    let a = e.target.closest('.acts button, .lights button')?.dataset.a;
+    if (a === 'kill' && e.altKey) a = 'restart';
     if (a === 'rename') rename(p);
     if (a === 'restart') send({ t: 'restart', id });
+    if (a === 'min') fold(p);
+    if (a === 'max') maximize(p);
     if (a === 'diff') toggleDiff(p);
     if (a === 'shell') send({ t: 'create', name: `${p.info.name} shell`, cwd: p.info.cwd, cmd: '', parent: id });
     if (a === 'preview') togglePreview(p);
@@ -396,13 +430,36 @@ const MAC_KEYS = {
 
 function place(p) {
   const r = W[p.info.id];
-  Object.assign(p.el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+  p.el.classList.toggle('min', !!r.min);
+  Object.assign(p.el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: r.min ? '' : `${r.h}px` });
   if (p.diffEl) Object.assign(p.diffEl.style, { left: `${r.x}px`, top: `${r.y + r.h + DIFF_GAP}px`, width: `${r.w}px` });
   if (p.prevEl) Object.assign(p.prevEl.style, { left: `${r.x}px`, top: `${r.y - PREV_H - DIFF_GAP}px`, width: `${r.w}px`, height: `${PREV_H}px` });
   for (const q of panes.values()) if (q.info.parent === p.info.id) drawWires();
   placeCrew(p.info.id);
   renderBeacons();
   syncWatch();
+}
+
+// Yellow light: fold the window down to its title bar (the shell keeps running at its size).
+function fold(p) {
+  const r = W[p.info.id];
+  r.min = !r.min;
+  place(p);
+  save();
+  if (!r.min) select(p.info.id);
+}
+// Green light: grow the window to fill the screen at 100%; again puts it back.
+function maximize(p) {
+  const r = W[p.info.id];
+  r.min = false;
+  if (r.prev) { Object.assign(r, r.prev); delete r.prev; place(p); save(); return focusMission(p.info.id); }
+  r.prev = { x: r.x, y: r.y, w: r.w, h: r.h };
+  r.w = Math.max(420, innerWidth - 48);
+  r.h = Math.max(240, innerHeight - 64 - 24);
+  place(p);
+  save();
+  select(p.info.id);
+  flyTo({ z: 1, x: 24 - r.x, y: 64 - r.y });
 }
 
 // Draw on the GPU like a native terminal; fall back to the DOM renderer if WebGL dies.
@@ -416,6 +473,7 @@ function loadGpu(term) {
 }
 
 function refit(p) {
+  if (W[p.info.id]?.min) return; // folded: keep the shell at its last real size
   try { p.fit.fit(); } catch { return; }
   const size = `${p.term.cols}x${p.term.rows}`;
   if (size !== p.lastSize) { p.lastSize = size; send({ t: 'resize', id: p.info.id, cols: p.term.cols, rows: p.term.rows }); }
@@ -464,6 +522,7 @@ function render(only) {
     p.el.querySelector('[data-a=preview]').classList.toggle('on', !!p.prevEl);
     setHTML(p.el.querySelector('.ports'), (p.info.ports || []).map((n) => `<button data-port="${n}" title="Open localhost:${n}">:${n}</button>`).join(''));
     p.el.querySelector('[data-a=merge]').hidden = !wt;
+    p.el.querySelector('[data-a=restart]').hidden = st !== 'exited';
     p.el.querySelector('[data-a=diff]').hidden = !g;
     p.el.querySelector('[data-a=diff]').classList.toggle('on', !!p.diffEl);
     p.el.querySelector('.now').textContent = st === 'waiting' && p.waitMsg ? p.waitMsg : now;
@@ -613,26 +672,71 @@ function renderCrew(p) {
 
 function makeNode(key, pid) {
   const n = document.createElement('div');
-  n.innerHTML = `<div class="hd"><span class="ins"></span><b class="cs"></b><span class="rl"></span><span class="t"></span><span class="led"></span></div><div class="tk"></div><div class="log"></div>`;
+  n.innerHTML = `<div class="hd"><span class="ins"></span><b class="cs"></b><span class="rl"></span><span class="t"></span><span class="led"></span></div><div class="tk"></div><div class="log"></div>
+    <form class="say"><textarea spellcheck="false" rows="2"></textarea><button title="Send (Enter). Shift-Enter for a new line">send</button></form>`;
+  n._sent = [];
   world.appendChild(n);
+  // a closed card opens on any click; the header toggles it (and drags it)
+  n.addEventListener('click', (e) => {
+    if (n.classList.contains('open') || e.target.closest('.hd') || getSelection().toString()) return;
+    toggleNode(n, pid);
+  });
+  const say = n.querySelector('.say'), box = say.querySelector('textarea');
+  box.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); say.requestSubmit(); }
+    if (e.key === 'Escape') { box.blur(); toggleNode(n, pid); }
+  });
+  say.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = box.value.trim();
+    if (!text || !n._a) return;
+    brief(pid, n._a, text);
+    n._sent.push({ t: Date.now(), d: text });
+    box.value = '';
+    n._key = '';
+    fill(n, n._a);
+    const log = n.querySelector('.log');
+    log.scrollTop = log.scrollHeight;
+  });
   n.querySelector('.hd').addEventListener('pointerdown', (e) => {
     if (e.button) return;
     n.style.zIndex = ++zTop;
     const o = { ...(C[key] || crewTree(pid).get(key) || { dx: 0, dy: 0 }) };
     drag(e, (dx, dy) => { C[key] = { dx: Math.round(o.dx + dx), dy: Math.round(o.dy + dy) }; placeCrew(pid); }, (moved) => {
       if (moved) return save();
-      n.classList.toggle('open'); // click: expand to the full orders + log
-      fill(n, n._a);
-      placeCrew(pid);
+      toggleNode(n, pid);
     });
   });
   return n;
 }
 
+// Open: the full orders, every step, the report, and a box to brief the agent.
+function toggleNode(n, pid) {
+  n.classList.toggle('open');
+  n.style.zIndex = ++zTop;
+  fill(n, n._a);
+  placeCrew(pid);
+  if (n.classList.contains('open')) {
+    const box = n.querySelector('.say textarea');
+    box.placeholder = n._a?.status === 'running' ? `Tell ${n._a.call} what to do next…` : `Send ${n._a?.call || 'it'} back out with a new task…`;
+    requestAnimationFrame(() => box.focus({ preventScroll: true }));
+  }
+}
+
+// Subagents have no keyboard of their own; only their lead can reach them (SendMessage).
+// So the note is typed into the lead's prompt, addressed by agent id. A busy lead queues it.
+function brief(pid, a, text) {
+  const msg = `[Moontty] Message from me for your subagent ${a.call} ("${a.name}", agentId ${a.id}). `
+    + `Pass it on with SendMessage${a.status === 'running' ? '' : ' (it has finished, so this resumes it)'}, word for word:\n\n${text}`;
+  send({ t: 'input', id: Number(pid), data: `\x1b[200~${msg}\x1b[201~` });
+  setTimeout(() => send({ t: 'input', id: Number(pid), data: '\r' }), 120);
+}
+
 function fill(n, a) {
   n._a = a;
   const open = n.classList.contains('open');
-  const key = `${a.call}|${a.status}|${a.steps.length}|${a.lastAt}|${a.report.length}|${a.parentCall}|${a.name}|${open}`;
+  const key = `${a.call}|${a.status}|${a.steps.length}|${a.lastAt}|${a.report.length}|${a.parentCall}|${a.name}|${open}|${n._sent.length}`;
   if (n._key === key) return;
   n._key = key;
   const hd = n.querySelector('.hd');
@@ -654,7 +758,8 @@ function fill(n, a) {
   const steps = open ? a.steps : a.steps.slice(-6);
   log.innerHTML = (open && a.prompt ? `<div class="ln orders">${esc(a.prompt)}</div>` : '')
     + steps.map((s) => `<div class="ln ${s.k}${s.err ? ' err' : ''}"><span class="tm">${fmtTime(s.t)}</span>${s.k === 'tool' ? `<span class="tn">${esc(s.name)}</span>` : ''}${esc(s.d)}</div>`).join('')
-    + (a.report ? `<div class="ln report">${esc(open ? a.report : a.report.split('\n')[0])}</div>` : '');
+    + (a.report ? `<div class="ln report">${esc(open ? a.report : a.report.split('\n')[0])}</div>` : '')
+    + (open ? n._sent.map((s) => `<div class="ln you"><span class="tm">${fmtTime(s.t)}</span>you → ${esc(s.d)}</div>`).join('') : '');
   if (open && atBottom && a.status === 'running') log.scrollTop = log.scrollHeight;
 }
 
