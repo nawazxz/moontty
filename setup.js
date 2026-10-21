@@ -66,4 +66,15 @@ if (added.length) {
   console.log(`        backup:  ${SETTINGS}.bak-moontty`);
 } else ok('hook already installed');
 
+// 4. plan usage: Claude Code only publishes it to a status line command, so the hook doubles as
+// one. It prints nothing, so Claude's screen is unchanged. A status line of your own is left alone.
+const sl = settings.statusLine;
+if (!sl) {
+  settings.statusLine = { type: 'command', command: HOOK, padding: 0 };
+  if (fs.existsSync(SETTINGS)) fs.copyFileSync(SETTINGS, `${SETTINGS}.bak-moontty`);
+  fs.writeFileSync(SETTINGS, JSON.stringify(settings, null, 2) + '\n');
+  ok('status line hook added: plan usage shows in the Moontty top bar');
+} else if (isOurs(sl.command)) ok('usage hook already installed');
+else warn('you have your own status line, so plan usage stays off. To get it, have your script also pipe its input to ' + HOOK);
+
 console.log('\nStart it with: moontty   (or ./deck from this folder)');

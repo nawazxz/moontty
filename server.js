@@ -97,6 +97,11 @@ function paneEnv(s) {
   for (const k of Object.keys(env)) if (INHERITED.test(k)) delete env[k];
   // Apps opened from Finder get no locale, and pbcopy/pbpaste then read UTF-8 as MacRoman (❯ became ‚ùØ¬†). Terminal.app sets one too.
   if (!env.LANG && !env.LC_ALL && !env.LC_CTYPE) env.LANG = 'en_US.UTF-8';
+  // zsh: a Moontty .zshenv loads your own config, then adds grey history hints (→ accepts).
+  if (path.basename(SHELL) === 'zsh') {
+    if (env.ZDOTDIR) env.MOONTTY_ZDOTDIR = env.ZDOTDIR;
+    env.ZDOTDIR = path.join(__dirname, 'shell', 'zsh');
+  }
   return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'agent-deck', SHELL_SESSIONS_DISABLE: '1', PROMPT_EOL_MARK: '', AGENT_DECK_ID: String(s.id), AGENT_DECK_PORT: String(PORT), PATH: `${path.join(__dirname, 'bin')}:${env.PATH || ''}` };
 }
 
@@ -408,13 +413,29 @@ const ROUTES = {
   '/vendor/addon-web-links.js': 'node_modules/@xterm/addon-web-links/lib/addon-web-links.js',
 };
 
+// Plan usage (5-hour and weekly limits, Pro/Max) arrives with Claude Code's status line call,
+// the only place it is published. It is account-wide, so the newest report from any pane wins.
+const USAGE_FILE = path.join(STATE_DIR, 'usage.json');
+let usage = (() => { try { return JSON.parse(fs.readFileSync(USAGE_FILE, 'utf8')); } catch { return null; } })();
+function onUsage(rl) {
+  const pick = (w) => (w && typeof w.used_percentage === 'number' ? { pct: w.used_percentage, resetsAt: (w.resets_at || 0) * 1000 } : null);
+  const next = { five: pick(rl.five_hour), week: pick(rl.seven_day), at: Date.now() };
+  if (!next.five && !next.week) return;
+  const same = usage && JSON.stringify({ ...usage, at: 0 }) === JSON.stringify({ ...next, at: 0 });
+  usage = next;
+  if (same) return;
+  broadcast({ t: 'usage', usage });
+  fs.writeFile(USAGE_FILE, JSON.stringify(usage), () => {});
+}
+
 const server = http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
   if (req.method === 'POST' && url === '/hook') {
     const s = sessions.get(Number(req.headers['x-deck-id']));
     let ev = {};
     try { ev = JSON.parse(await readBody(req)); } catch {}
-    if (s && !s.exited) onHook(s, ev);
+    if (ev.rate_limits) onUsage(ev.rate_limits); // the status line call: plan usage, not an event
+    else if (s && !s.exited) onHook(s, ev);
     return res.writeHead(204).end();
   }
   // mt-preview from inside a pane: drive that mission's preview pane.
@@ -449,6 +470,7 @@ wss.on('connection', (ws, req) => {
   if (origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return ws.close();
   clients.add(ws);
   ws.send(JSON.stringify({ t: 'hello', build: BUILD }));
+  if (usage) ws.send(JSON.stringify({ t: 'usage', usage }));
   ws.send(JSON.stringify({ t: 'sessions', list: [...sessions.values()].map(publicInfo) }));
   for (const s of sessions.values()) {
     ws.send(JSON.stringify({ t: 'replay', id: s.id, data: s.buffer }));

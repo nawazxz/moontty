@@ -295,3 +295,14 @@ body.dragging .prevp .shield { display: block; }
 .nox { image-rendering: pixelated; width: 18px; height: 18px; }
 .brand .nox { margin-right: 2px; }
 #empty .nox.big { width: 96px; height: 96px; }
+
+/* plan usage in the top bar: 5-hour and weekly limits */
+#usage { display: flex; gap: 14px; font: 10.5px var(--mono); color: var(--dim); letter-spacing: .08em; }
+#usage[hidden] { display: none; }
+#usage .u { display: flex; align-items: center; gap: 6px; }
+#usage em { font-style: normal; color: var(--mute); }
+#usage i { width: 46px; height: 5px; background: #333; display: block; }
+#usage b { display: block; height: 100%; background: var(--dim); }
+#usage .warm b { background: var(--amber); }
+#usage .hot { color: var(--red); }
+#usage .hot b { background: var(--red); }

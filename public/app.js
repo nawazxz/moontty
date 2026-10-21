@@ -58,6 +58,7 @@ function connect() {
     else if (m.t === 'pr') { const p = panes.get(m.id); if (p) { p.info.pr = m.pr; scheduleRender(m.id); } }
     else if (m.t === 'preview') onPreview(m);
     else if (m.t === 'diff') onDiff(m);
+    else if (m.t === 'usage') { usage = m.usage; renderUsage(); }
     else if (m.t === 'merged') { const p = panes.get(m.id); if (p) toast(p, m.msg, m.ok ? 'done' : 'waiting'); send({ t: 'diff', id: m.id }); }
   };
 }
@@ -307,7 +308,7 @@ function addPane(info) {
     <i class="grip"></i>`;
   world.appendChild(el);
   const term = new Terminal({
-    fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace', fontSize: 12.5, lineHeight: 1.2,
+    fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace', fontSize: W[info.id]?.fs || FONT, lineHeight: 1.2,
     cursorBlink: true, allowTransparency: false, smoothScrollDuration: 0, fastScrollSensitivity: 5, allowProposedApi: true, scrollback: 10000, theme: THEME, macOptionIsMeta: true,
   });
   const fit = new FitAddon.FitAddon();
@@ -365,13 +366,7 @@ function addPane(info) {
       const wt = p.info.worktree;
       if (confirm(`Merge ${wt.branch} into ${wt.base}?\n\nThis runs in ${wt.root}. Conflicts are never auto-resolved: the merge is undone and you get a message.`)) send({ t: 'merge', id });
     }
-    const kids = [...panes.values()].filter((q) => q.info.parent === id);
-    if (a === 'kill' && confirm(`End mission ${p.info.name}? ZERO and its crew will be stood down.${kids.length ? `\n\nIts ${kids.length} docked shell(s) end too.` : ''}`)) {
-      for (const k of kids) send({ t: 'kill', id: k.info.id });
-      const wt = p.info.worktree;
-      const dropBranch = !!wt && confirm(`Also delete branch ${wt.branch} and its folder?\n\n${wt.top}\n\nUnmerged work on it is lost. Cancel keeps both.`);
-      send({ t: 'kill', id, dropBranch });
-    }
+    if (a === 'kill') endMission(p);
   };
   // port: preview it beside the mission (⌘-click opens your browser instead)
   bar.querySelector('.ports').onclick = (e) => {
@@ -390,6 +385,27 @@ function addPane(info) {
   el.querySelector('.big').onclick = () => focusMission(id);
   el.addEventListener('pointerdown', () => { if (current !== id) select(id, false); }, true);
   new ResizeObserver(() => refit(p)).observe(el.querySelector('.term'));
+}
+
+// Red light or ⌘W: end the mission, its docked shells, and (if asked) its own branch.
+function endMission(p) {
+  const id = p.info.id;
+  const kids = [...panes.values()].filter((q) => q.info.parent === id);
+  if (!confirm(`End mission ${p.info.name}? ZERO and its crew will be stood down.${kids.length ? `\n\nIts ${kids.length} docked shell(s) end too.` : ''}`)) return;
+  for (const k of kids) send({ t: 'kill', id: k.info.id });
+  const wt = p.info.worktree;
+  const dropBranch = !!wt && confirm(`Also delete branch ${wt.branch} and its folder?\n\n${wt.top}\n\nUnmerged work on it is lost. Cancel keeps both.`);
+  send({ t: 'kill', id, dropBranch });
+}
+
+// ⌘+ / ⌘− text size, per window like Terminal.app; kept with the window's layout.
+const FONT = 12.5;
+function fontSize(p, step) {
+  const r = W[p.info.id];
+  r.fs = step ? Math.max(8, Math.min(28, (r.fs || FONT) + step)) : FONT;
+  p.term.options.fontSize = r.fs;
+  refit(p);
+  save();
 }
 
 // Rename in place on the title bar: Enter or clicking away saves, Esc cancels.
@@ -1056,9 +1072,26 @@ function toast(p, what, cls, who) {
   }
 }
 
+// ---------- plan usage: the 5-hour and weekly limits, as /usage shows them ----------
+let usage = null;
+function renderUsage() {
+  const el = $('#usage');
+  const now = Date.now();
+  // a window whose reset has passed is stale until Claude reports again
+  const live = [['5H', usage?.five, 'session'], ['WK', usage?.week, 'week']].filter(([, w]) => w && (!w.resetsAt || w.resetsAt > now));
+  el.hidden = !live.length;
+  const resets = (t) => { if (!t) return ''; const m = Math.round((t - now) / 60000); return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`; };
+  setHTML(el, live.map(([k, w]) => {
+    const pct = Math.round(w.pct);
+    return `<span class="u ${pct >= 90 ? 'hot' : pct >= 75 ? 'warm' : ''}"><em>${k}</em><i><b style="width:${Math.min(100, pct)}%"></b></i>${pct}%</span>`;
+  }).join(''));
+  el.title = live.map(([, w, name]) => `${name}: ${w.pct.toFixed(1)}% used${w.resetsAt ? `, resets in ${resets(w.resetsAt)}` : ''}`).join('\n') + (usage ? `\nas of ${fmtTime(usage.at)}` : '');
+}
+
 // ticking clock + running timers
 setInterval(() => {
   $('#clock').textContent = fmtTime(Date.now());
+  if (usage) renderUsage();
   document.querySelectorAll('[data-since]').forEach((el) => {
     const t = Number(el.dataset.since);
     if (t) el.textContent = `T+${fmtDur(Date.now() - t)}`;
@@ -1124,14 +1157,23 @@ window.addEventListener('keydown', (e) => {
   if (!e.metaKey || e.altKey || e.ctrlKey || dlg.open) return;
   const ids = [...panes.keys()];
   const i = ids.indexOf(current);
+  const p = panes.get(current);
+  const inTerm = !!document.activeElement?.closest?.('.xterm');
   let handled = true;
   if (/^Digit[1-9]$/.test(e.code) && !e.shiftKey) focusMission(ids[Number(e.code.slice(5)) - 1]);
   else if (e.code === 'Digit0' && !e.shiftKey) overview();
   else if (e.code === 'KeyN') e.shiftKey ? openNew() : quickShell();
   else if (e.code === 'BracketRight') focusMission(ids[(i + 1) % ids.length]);
   else if (e.code === 'BracketLeft') focusMission(ids[(i - 1 + ids.length) % ids.length]);
-  else if (e.code === 'Equal') zoomTo(innerWidth / 2, innerHeight / 2, cam.z * 1.25);
-  else if (e.code === 'Minus') zoomTo(innerWidth / 2, innerHeight / 2, cam.z / 1.25);
+  // the rest behave as in Terminal.app; pinch or ctrl-scroll zooms the canvas
+  else if (e.code === 'KeyT') quickShell();
+  else if (e.code === 'KeyW' && p) endMission(p);
+  else if (e.code === 'Equal' && p) fontSize(p, 1);
+  else if (e.code === 'Minus' && p) fontSize(p, -1);
+  else if (e.code === 'Digit0' && e.shiftKey && p) fontSize(p, 0);
+  else if (e.code === 'KeyA' && p && inTerm) p.term.selectAll();
+  else if (e.code === 'Home' && p) p.term.scrollToTop();
+  else if (e.code === 'End' && p) p.term.scrollToBottom();
   else handled = false;
   if (handled) { e.preventDefault(); e.stopPropagation(); }
 }, true);
